@@ -1,0 +1,19 @@
+{
+  "fetched_at": "2026-10-26T06:22:36.915245+00:00",
+  "source": "tombatossals/chords-db",
+  "license": "MIT",
+  "files": [
+    {
+      "file": "guitar.json",
+      "url": "https://raw.githubusercontent.com/tombatossals/chords-db/master/lib/guitar.json",
+      "bytes": 377917,
+      "sha256": "cfe439962b2f444d2c341b1f0261403b4c3a3416e321147286fc608922699974"
+    },
+    {
+      "file": "LICENSE",
+      "url": "https://raw.githubusercontent.com/tombatossals/chords-db/master/LICENSE",
+      "bytes": 1069,
+      "sha256": "ca1f5a79ed75347924bba07c979bc7a6d0f7438e82d655f7e8dcdfa32939a3d9"
+    }
+  ]
+}

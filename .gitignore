@@ -1,0 +1,42 @@
+# Local projects, uploads, generated results and model-call records.
+**/data/
+**/.env
+**/.env.*
+!**/.env.example
+**/node_modules/
+**/__pycache__/
+**/.DS_Store
+*.log
+*.zip
+*.part
+
+# The original showcase videos are distributed as a private Release asset.
+/mv-studio/public/assets/oiioii-mv/*.mp4
+
+# Future browser captures and temporary QA artifacts stay local.
+**/qa-data/
+**/before-public/
+**/showcase-frames/
+
+
+# Local backup / cleanup state is not application source.
+/.local-maintenance/
+/BACKUP-MANIFEST.json
+
+**/.local/
+**/.venv/
+**/projects/
+**/workflow/runs/
+**/workflow/batches/
+**/exports/
+
+# Public source excludes optional local models and research archives.
+**/models/
+**/checkpoints/
+**/weights/
+*.safetensors
+*.ckpt
+*.sf2
+*.sfz
+/music-workbench/research/
+/research/

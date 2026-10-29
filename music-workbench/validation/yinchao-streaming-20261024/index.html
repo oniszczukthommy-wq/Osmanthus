@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>音潮 · 生成与试听验证</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#10121a;color:#edf0fa;font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:980px;margin:54px auto;padding:0 24px}h1{font-size:30px;line-height:1.3}small,.muted{color:#aeb6ce}.card{background:#1a1e2b;border:1px solid #30384f;border-radius:16px;padding:24px;margin:20px 0}.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}button,select{font:inherit;border:1px solid #53658e;border-radius:9px;padding:10px 17px;background:#7895ff;color:#0b1020;font-weight:600;cursor:pointer}select{background:#272e43;color:#edf0fa}button:disabled{opacity:.45;cursor:not-allowed}audio{width:100%;margin:18px 0 8px}.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.metric{background:#121722;padding:16px;border-radius:10px}.metric b{display:block;font-size:25px}.metric span{font-size:13px;color:#b5bdd2}#status{font-weight:600;color:#bacbff}pre{white-space:pre-wrap;font-size:13px;color:#aeb6ce;max-height:240px;overflow:auto}a{color:#a7baff}details{margin-top:16px}#error{color:#ffb2ba}#notice{color:#e5ca87}@media(max-width:650px){.metrics{grid-template-columns:1fr}main{margin-top:30px}}
+</style>
+<main>
+<small>本地验证 · 中文流行 · 系统女声要求</small><h1>生成过程中，就能开始听吗？</h1>
+<p class="muted">复用 DeepSeek 原创《末班车的窗》歌词，观察音潮实际返回的状态。只有拿到流式地址后才显示流式试听。</p>
+<section class="card"><div class="row"><select id="model"><option value="v4.5">音潮 v4.5</option><option value="v3.5">音潮 v3.5 对照</option></select><button id="generate">生成一首 · 约 ¥0.22</button><span id="status">尚未开始</span></div><p id="notice"></p><p id="error"></p>
+<audio id="audio" controls preload="none"></audio><div class="row"><button id="listen" disabled>试听</button><button id="full" disabled>从头播放完整版</button><a id="download" hidden download="末班车的窗.mp3">下载完整 MP3</a></div></section>
+<div class="metrics"><div class="metric"><span>接口首次给出流式地址</span><b id="streamTime">—</b></div><div class="metric"><span>浏览器首次实际播放</span><b id="playTime">—</b></div><div class="metric"><span>整首生成完成</span><b id="doneTime">—</b></div></div>
+<section class="card"><div class="row"><b>验证结果</b><span id="verdict">等待一次真实生成</span></div><p class="muted" id="position">实际播放时间：0.0 秒</p><details><summary>歌词与生成要求</summary><pre id="lyrics"></pre></details><details open><summary>真实事件记录</summary><pre id="events">—</pre></details></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);const audio=$('audio');let job=null,currentSource=null,pollTimer=null,lastTelemetry=0;
+const labels={submitting:'正在提交',pending:'排队中',running:'正在生成',stream:'可试听，后台继续生成',done:'整首生成完成',error:'请求遇到问题',fail:'生成失败',cancelled:'已取消'};
+const seconds=value=>value==null?'—':value.toFixed(1)+' 秒';
+async function api(url,body){const response=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const value=await response.json();if(!response.ok)throw new Error(value.error||'请求失败');return value;}
+function mediaUrl(kind){return '/api/media/'+job.id+'/'+kind;}
+async function telemetry(event){if(!job)return;try{await api('/api/jobs/'+job.id+'/telemetry',{event,current_time:audio.currentTime,source:currentSource});}catch{}}
+function render(){if(!job)return;$('status').textContent=labels[job.status]||job.status;$('streamTime').textContent=seconds(job.first_stream_seconds);$('playTime').textContent=seconds(job.first_play_seconds);$('doneTime').textContent=seconds(job.done_seconds);$('error').textContent=job.error||job.stream_error||'';const terminal=['done','error','fail','cancelled'].includes(job.status);$('generate').disabled=!terminal;$('model').disabled=!terminal;
+$('listen').disabled=!(job.status!=='done'&&job.stream_available||job.download_ready);$('listen').textContent=job.status!=='done'&&job.stream_available?'试听生成中的音频':'试听完整歌曲';$('full').disabled=!job.download_ready;$('download').hidden=!job.download_ready;$('download').href=mediaUrl('complete');
+$('notice').textContent=job.status==='done'&&!job.stream_available?'这次接口直到完成都没有返回流式地址，当前只能播放完成后的歌曲。':job.stream_available?'流式地址已就绪。点击试听，检查整首完成前是否能播放。':'等待模型产生可播放的音频；这里不显示虚构的完成百分比。';
+$('verdict').textContent=job.first_play_before_done?'已观察到整首完成前的实际播放':job.status==='done'&&!job.stream_available?'本次未观察到边生成边播放':job.stream_available?'流式地址存在，等待验证浏览器解码播放':'等待实际结果';
+$('events').textContent=job.events.map(e=>e.at.toFixed(1)+'s  '+e.type+(e.status?' · '+e.status:'')+(e.current_time!=null?' · 音频 '+Number(e.current_time).toFixed(1)+'s':'')+(e.message?' · '+e.message:'')).join('\n');}
+async function poll(){if(!job)return;try{job=await api('/api/jobs/'+job.id);render();}catch(error){$('error').textContent=error.message;}}
+$('generate').onclick=async()=>{$('generate').disabled=true;$('error').textContent='';audio.pause();audio.removeAttribute('src');audio.load();currentSource=null;try{job=await api('/api/jobs',{model:$('model').value});localStorage.setItem('yinchao-stream-validation-job',job.id);render();clearInterval(pollTimer);pollTimer=setInterval(poll,1000);}catch(error){$('error').textContent=error.message;$('generate').disabled=false;}};
+async function listen(kind){if(!job)return;if(currentSource!==kind||audio.error){currentSource=kind;audio.src=mediaUrl(kind)+'?attempt='+Date.now();}try{await audio.play();}catch(error){$('error').textContent='浏览器还未能播放：'+error.message;}}
+$('listen').onclick=()=>listen(job.status!=='done'&&job.stream_available?'stream':'complete');$('full').onclick=()=>{currentSource=null;listen('complete');};
+for(const event of ['playing','waiting','stalled','ended','pause'])audio.addEventListener(event,()=>telemetry(event));audio.addEventListener('error',()=>telemetry('error'));
+audio.addEventListener('timeupdate',()=>{$('position').textContent='实际播放时间：'+audio.currentTime.toFixed(1)+' 秒';if(Date.now()-lastTelemetry>5000){lastTelemetry=Date.now();telemetry('timeupdate');}});
+Object.defineProperty(window,'streamingValidation',{get:()=>({job,currentSource,currentTime:audio.currentTime,paused:audio.paused,readyState:audio.readyState,networkState:audio.networkState,audioError:audio.error?{code:audio.error.code,message:audio.error.message}:null})});
+api('/api/example').then(example=>{$('lyrics').textContent=example.prompt+'\n\n'+example.lyrics;});
+const previous=localStorage.getItem('yinchao-stream-validation-job');if(previous){job={id:previous};poll().then(()=>{pollTimer=setInterval(poll,1000);});}else{api('/api/jobs').then(result=>{const latest=result.jobs.sort((a,b)=>b.created_at-a.created_at)[0];if(latest){job=latest;$('model').value=job.model;localStorage.setItem('yinchao-stream-validation-job',job.id);render();pollTimer=setInterval(poll,1000);}});}
+</script></html>

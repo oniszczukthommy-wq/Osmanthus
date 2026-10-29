@@ -1,0 +1,40 @@
+/* Timeline hit areas and ruler share the waveform's actual horizontal origin. */
+.timeline-help { margin: -4px 0 17px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.section-heading .instrument-actions button { font-size: 11px; padding: 7px 10px; }
+#ruler { display: block; padding: 0; height: 31px; margin-left: 157px; }
+#ruler-scale { position: relative; width: 100%; height: 30px; }
+.ruler-tick { position: absolute; bottom: 0; height: 5px; width: 1px; background: #3b4250; }
+.ruler-tick.major { height: 10px; background: #596375; }
+.ruler-tick > span { position: absolute; top: -15px; left: 0; transform: translateX(-50%); white-space: nowrap; font-size: 10px; font-variant-numeric: tabular-nums; }
+.ruler-tick.first > span { transform: none; }
+.ruler-tick.last > span { transform: translateX(-100%); }
+.playhead { width: 15px; margin-left: -7px; background: transparent; box-shadow: none; cursor: ew-resize; pointer-events: auto; touch-action: none; z-index: 4; }
+.playhead::after { content: ''; position: absolute; left: 7px; top: 0; bottom: 0; width: 1px; background: #fff; box-shadow: 0 0 4px #fff8; }
+.playhead::before { left: 3px; width: 9px; height: 8px; z-index: 1; }
+.playhead:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+@media(max-width:1100px) { #ruler { margin-left: 118px; } }
+.instrument-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end}
+.track .track-name{padding:9px 8px;border:1px solid #3a3e4a;border-radius:7px;gap:6px}
+.track .track-name[aria-pressed="true"]{color:var(--track-color);background:color-mix(in srgb,var(--track-color) 14%,#191c24);border-color:var(--track-color)}
+.track .track-name[aria-pressed="true"] .dot{box-shadow:0 0 8px var(--track-color)}
+.track .track-name[aria-pressed="false"]{color:#858b99;background:#161920;border-color:#323641}
+.track .track-name[aria-pressed="false"] .dot{background:#555c68;box-shadow:none}
+.track-status{font-size:9px;margin-left:auto;white-space:nowrap}
+.track.is-disabled canvas{opacity:.28}
+.track-name:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.arrangement-panel{border-top:1px solid var(--line);margin-top:22px;padding-top:20px}
+.arrangement-panel h2{font-size:14px}
+.arrangement-panel>button{width:100%}
+#arrangement-status{min-height:20px;overflow-wrap:anywhere}
+.vocal-score-panel {margin-top:22px;padding:24px;}
+.score-toolbar {display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:16px 0;}
+.score-toolbar button[aria-pressed="true"] {background:#b6a3ff;color:#171a24;}
+.score-toolbar a {padding:9px 14px;border-radius:9px;background:#b6a3ff;color:#171a24;text-decoration:none;}
+.score-preview-controls {display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin:14px 0;}
+.score-preview-controls audio {width:min(460px,100%);height:40px;}
+.score-preview-controls select {min-width:190px;}
+#score-pages {background:#edf0f5;border-radius:12px;max-height:950px;overflow:auto;padding:14px;}
+#score-pages img {display:block;width:100%;height:auto;background:white;margin:0 auto 16px;max-width:1120px;}
+#score-review-list {display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:8px;margin:14px 0;}
+#score-review-list button {text-align:left;white-space:normal;line-height:1.6;font-size:13px;}
+#score-missing-warning {padding:12px;border:1px solid #99652d;border-radius:9px;color:#e8bf8d;}

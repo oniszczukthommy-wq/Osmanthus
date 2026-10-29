@@ -1,0 +1,16 @@
+{
+  "name": "mv-studio-flow-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oniszczukthommy-wq/Osmanthus.git",
+    "directory": "mv-studio"
+  }
+}
