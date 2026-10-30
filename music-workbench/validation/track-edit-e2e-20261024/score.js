@@ -37,6 +37,7 @@ export function initializeScore({getProject,transport,settle}){
  function selected(){return view().score?.notes.find(n=>n.id===selectedNoteId)||null;}
  function paint(){
   const current=view(),s=current.score,j=current.job;
+  if(getProject()?.instrumental){$('create-vocal-score').disabled=true;$('create-vocal-score').textContent='纯音乐无需演唱谱';$('vocal-score-status').textContent='当前为纯音乐，不加载演唱歌词和演唱谱。';$('vocal-score-content').hidden=true;panel.hidden=true;return;}
   $('create-vocal-score').disabled=starting||working()||reviewBusy||isWorking(candidateJob)||!getProject()?.generation_job_id;
   $('create-vocal-score').textContent=score?'检查当前已保存演唱谱':working()?'正在制作候选谱…':'生成演唱谱候选';
   const stages={queued:'等待本机出谱',transcribing:'提取实际演唱音符',aligning:'对齐原始歌词',refining:'局部复核未匹配歌词与音符',checking:'检查音高与节拍',engraving:'排版五线谱与简谱'};
@@ -102,6 +103,7 @@ export function initializeScore({getProject,transport,settle}){
  }
  async function refresh(force=false){const project=getProject();if(!project||loading)return;
   if(sourceSignature!==signature(project)){window.pauseScorePreview();audio.removeAttribute('src');audio.load();projectId=project.id;sourceSignature=signature(project);job=null;score=null;loadedJob=null;review=null;candidateJob=null;candidateScore=null;candidateViewing=false;selectedNoteId=null;reviewMessage='';error='';paint();force=true;}
+  if(project.instrumental){paint();return;}
   if(!force&&(!job||!working()))return;loading=true;const id=projectId,expected=sourceSignature;
   try{const data=await request(`/api/scores/project/${id}`);if(signature(getProject())!==expected)return;const previousAcceptance=job?.accuracy_accepted;job=data.job;error='';
    if(job?.stage==='ready'&&loadedJob!==job.id){const next=await request(job.files['score.json']);if(signature(getProject())!==expected)return;

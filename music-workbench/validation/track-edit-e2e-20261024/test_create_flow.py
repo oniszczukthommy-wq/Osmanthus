@@ -113,11 +113,61 @@ class CreationFlowTests(unittest.TestCase):
         self.assertEqual(draft['title'],'保留的标题');self.assertEqual(draft['stage'],'ready')
         self.assertFalse(self.drafts.public(draft)['music_submitted'])
 
-    def test_simple_cannot_silently_ignore_manual_lyrics_and_instrumental_rejected(self):
-        for body in ({**self.body,'lyrics':'不能丢掉我的词'},{**self.body,'instrumental':True},{**self.body,'mode':'other'},
+    def test_simple_cannot_silently_ignore_manual_lyrics_or_invalid_options(self):
+        for body in ({**self.body,'lyrics':'不能丢掉我的词'},{**self.body,'instrumental':'true'},{**self.body,'mode':'other'},
                      {**self.body,'prompt':['wrong type']},{**self.body,'prompt':'短'}):
             with self.subTest(body=body),self.assertRaises(ValueError):self.flow.start(body)
         self.assertEqual(self.flow.requests,{});self.pair_launch.assert_not_called()
+
+    def test_instrumental_skips_lyrics_and_uses_two_real_pair_jobs(self):
+        for mode in ('simple','advanced'):
+            body={**self.body,'request_id':str(uuid.uuid4()),'mode':mode,'instrumental':True,'prompt':'轻快钢琴和弦乐纯音乐'}
+            with patch.dict('os.environ',{'DEEPSEEK_API_KEY':''}):result=self.flow.start(body)
+            self.assertTrue(result['input']['instrumental'])
+            batch,writer=self.complete_planning(result['id']);writer.assert_not_called()
+            self.assertEqual(batch['stage'],'generating');self.assertEqual(batch['lyrics'],'')
+            self.assertEqual(len(batch['candidate_ids']),2)
+            for identifier in batch['candidate_ids'].values():
+                job=self.work.jobs[identifier]
+                self.assertTrue(job['instrumental']);self.assertEqual(job['lyrics'],'');self.assertEqual(job['voice'],'')
+                endpoint,payload=w.STREAM.provider_submission(job)
+                self.assertTrue(endpoint.endswith('/song/instrumental'))
+                self.assertEqual(set(payload),{'model','prompt','n'});self.assertEqual(payload['n'],1)
+            self.assertTrue(self.pairs.public(batch)['instrumental'])
+        self.assertEqual(self.drafts.drafts,{})
+
+    def test_instrumental_replay_does_not_submit_another_pair_and_cannot_become_vocal(self):
+        body={**self.body,'instrumental':True};first=self.flow.start(body);self.flow.start(body)
+        self.pair_launch.assert_called_once()
+        with self.assertRaises(RuntimeError):self.flow.start(self.body)
+        self.assertEqual(first['batch_id'],body['request_id'])
+
+    def test_instrumental_refuses_lyrics_and_approval_drafts(self):
+        with self.assertRaises(ValueError):self.flow.start(self.manual(instrumental=True))
+        with self.assertRaisesRegex(ValueError,'纯音乐'):
+            self.drafts.start({'request_id':str(uuid.uuid4()),'brief':'轻快器乐','instrumental':True})
+        self.pair_launch.assert_not_called();self.lyric_launch.assert_not_called()
+
+    def test_completed_unselected_download_does_not_block_creation_but_preparation_does(self):
+        identifier=str(uuid.uuid4());self.work.jobs[identifier]={'id':identifier,'status':'done','selected_for_preparation':False}
+        self.work.running.add(identifier)
+        self.flow.start({**self.body,'instrumental':True})
+        self.assertEqual(self.pair_launch.call_count,1)
+        self.work.jobs[identifier]['selected_for_preparation']=True
+        with self.assertRaisesRegex(RuntimeError,'等待完成'):
+            self.flow.start({**self.body,'request_id':str(uuid.uuid4()),'instrumental':True})
+        self.assertEqual(self.pair_launch.call_count,1)
+
+    def test_provider_complete_retry_only_downloads_without_query_or_paid_submission(self):
+        job={'id':str(uuid.uuid4()),'status':'done','audio_url':'https://example.test/complete.mp3','task_id':'already-paid'}
+        with patch.object(w.STREAM,'finish_download') as download,patch.object(w.STREAM,'request_json') as request:
+            w.STREAM.worker(job)
+        download.assert_called_once_with(job);request.assert_not_called()
+
+    def test_vocal_provider_payload_is_unchanged(self):
+        endpoint,payload=w.STREAM.provider_submission({'model':'v4.5','prompt':'音乐','lyrics':'歌词'})
+        self.assertTrue(endpoint.endswith('/song/generate'));self.assertEqual(payload['lyric'],'歌词')
+        self.assertEqual(payload['task_type'],'normal')
 
     def test_lyric_helper_context_is_in_request_not_mistaken_for_finished_lyrics(self):
         request={**self.body,'lyrics':'用户已经写下的一句歌词','instruction':'延续这句的画面'}

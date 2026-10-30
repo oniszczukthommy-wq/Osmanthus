@@ -256,7 +256,7 @@ class Project:
                 'vocal_candidates':list(reversed(list(self.vocal_assets.values()))),
                 'available_parts':self.available_parts(),
                 'original_audio_url':f'/audio/{self.state["id"]}/original.wav',
-                'source_sha256':self.state['source_sha256'],'generation_job_id':self.meta.get('generation_job_id')}
+                'source_sha256':self.state['source_sha256'],'generation_job_id':self.meta.get('generation_job_id'),'instrumental':bool(self.meta.get('instrumental'))}
 
     def check_revision(self, revision):
         if revision != self.state['revision']: raise RuntimeError('工程已变化，请刷新状态后重试')

@@ -63,9 +63,9 @@ await test('export, score and mix sharing prepare exact audio for both same and 
 await test('same-project Studio navigation waits for audio and remains on the current page if loading fails',async()=>{
  const fn=studio.slice(studio.indexOf('async function activateEditor('),studio.indexOf('async function openProject('));
  for(const fail of [false,true]){
-  const wait=deferred(),navigations=[],context={navigation:1,player:null,window:{pauseGenerationPreview:()=>{},dispatchEvent:()=>{}},engine:{getProject:()=>({id:'one'}),settle:async()=>true,prepareAudio:()=>wait.promise},navigate:page=>navigations.push(page),renderEditor:()=>{},Event:function Event(){}};
-  vm.runInNewContext(fn,context);const result=context.activateEditor('one');await turn();assert.equal(navigations.length,0);
-  if(fail){wait.reject(Error('audio download failed'));await assert.rejects(result,/download failed/);assert.equal(navigations.length,0);}else{wait.resolve();await result;assert.deepEqual(navigations,['editor']);}
+  const wait=deferred(),navigations=[],loading=[],context={editorLoadingToken:0,editorLoading:(show)=>loading.push(show),navigation:1,player:null,window:{pauseGenerationPreview:()=>{},dispatchEvent:()=>{}},engine:{getProject:()=>({id:'one'}),settle:async()=>true,prepareAudio:()=>wait.promise},navigate:page=>navigations.push(page),renderEditor:()=>{},Event:function Event(){}};
+  vm.runInNewContext(fn,context);const result=context.activateEditor('one');await turn();assert.equal(navigations.length,0);assert.deepEqual(loading,[true]);
+  if(fail){wait.reject(Error('audio download failed'));await assert.rejects(result,/download failed/);assert.equal(navigations.length,0);}else{wait.resolve();await result;assert.deepEqual(navigations,['editor']);}assert.deepEqual(loading,[true,false]);
  }
 });
 process.stdout.write(passed+' tests passed\n');

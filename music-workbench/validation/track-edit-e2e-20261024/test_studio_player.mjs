@@ -35,6 +35,11 @@ await test('pause cancels late play after source loading',async()=>{
  const f=fixture(),wait=deferred(),queue=createPlaybackQueue(f.engine);f.engine.activate=async id=>{await wait.promise;f.state.projectId=id;};
  const request=queue.playSong('one');await turn();queue.pause();wait.resolve();assert.equal((await request).superseded,true);assert.equal(f.state.playing,false);assert.equal(f.log.filter(x=>x[0]==='play').length,0);queue.destroy();
 });
+await test('cancelling preparation dismisses loading immediately and prevents late playback',async()=>{
+ const f=fixture(),wait=deferred();f.engine.activate=async id=>{await wait.promise;f.state.projectId=id;};
+ const queue=createPlaybackQueue(f.engine),pending=queue.playSong('one');await turn();assert.equal(queue.loading,true);queue.pause();assert.equal(queue.loading,false);assert.equal(queue.working,true);
+ wait.resolve();await pending;assert.equal(f.state.playing,false);assert.equal(queue.loading,false);queue.destroy();
+});
 await test('real source error releases queue and can be retried',async()=>{
  const f=fixture(),queue=createPlaybackQueue(f.engine);f.engine.activate=async()=>{throw Error('source failed');};await assert.rejects(queue.playSong('one'),/source failed/);
  f.engine.activate=async id=>{f.state.projectId=id;};await queue.playSong('two');assert.equal(f.state.playing,true);assert.equal(queue.working,false);queue.destroy();

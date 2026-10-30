@@ -49,16 +49,23 @@ def public(job:dict)->dict:
         return result
 
 
+def provider_submission(job:dict):
+    if job.get('instrumental'):
+        return 'https://open.yinchaoyongxian.com/api/v1/song/instrumental',{'model':job['model'],'prompt':job['prompt'],'n':1}
+    return 'https://open.yinchaoyongxian.com/api/v1/song/generate',{'model':job['model'],'task_type':'normal','prompt':job['prompt'],'lyric':job['lyrics'],'n':1}
+
 def worker(job:dict)->None:
     key=os.environ.get('YINCHAO_API_KEY','')
     folder=ROOT/'runs'/job['id']
     try:
+        if job.get('status')=='done' and job.get('audio_url'):
+            finish_download(job);return
         if not job.get('task_id'):
-            body={'model':job['model'],'task_type':'normal','prompt':job['prompt'],'lyric':job['lyrics'],'n':1}
+            endpoint,body=provider_submission(job)
             (folder/'request.json').write_text(json.dumps(body,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
             # Persist intent before posting. Restart never silently resubmits.
             with LOCK:job['submission_started']=True;persist(job)
-            response=request_json('https://open.yinchaoyongxian.com/api/v1/song/generate',key,body)
+            response=request_json(endpoint,key,body)
             task_id=response.get('id') or response.get('task_id')
             if not task_id:raise RuntimeError('Provider returned no task ID')
             with LOCK:job['task_id']=task_id;job['status']='pending'
@@ -143,7 +150,7 @@ def finish_download(job:dict)->None:
     for attempt in range(3):
         process=None
         try:
-            process=media_curl(job['audio_url'],resolve_media=attempt>0)
+            process=media_curl(job['audio_url'],resolve_media=attempt==1)
             data=process.stdout.read()
             diagnostic=process.stderr.read(500).decode('utf-8','replace').replace(job['audio_url'],'<media-url>')
             if process.wait(timeout=10)!=0 or len(data)<10000:raise RuntimeError(diagnostic or 'Final audio download incomplete')

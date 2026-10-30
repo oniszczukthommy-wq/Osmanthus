@@ -627,7 +627,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json(202,CONVERSIONS.start(PROJECT,body))
             if path=='/api/lyrics/jobs':return self.json(202,LYRICS.start(project_directory(body.get('project_id'))))
             if path=='/api/creation/jobs':
-                if body.get('request_id') not in CREATE_FLOW.requests:raise ValueError('请先展示并确认歌词，再生成歌曲；请刷新页面使用新的创作流程')
+                if body.get('instrumental') is not True and body.get('request_id') not in CREATE_FLOW.requests:raise ValueError('请先展示并确认歌词，再生成歌曲；请刷新页面使用新的创作流程')
                 return self.json(202,CREATE_FLOW.start(body))
             if path=='/api/creation/lyrics':return self.json(202,CREATE_FLOW.write_lyrics(body))
             match=re.fullmatch(r'/api/creation/jobs/([a-f0-9-]+)/resume',path)

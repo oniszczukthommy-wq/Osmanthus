@@ -138,3 +138,53 @@ html,body{margin:0;min-height:100%;background:#000}#os-mix-28{--studio-sidebar-w
 #os-mix-28 main[data-studio-editor]:has(#candidate-review-panel:not([hidden])){padding-bottom:24px;scroll-padding-bottom:24px}
 #os-mix-28 .ux-work:has(#candidate-review-panel:not([hidden])) .studio-ask-shell{position:static;inset:auto;transform:none;margin:20px auto 0;width:min(650px,calc(100% - 28px));max-height:none;overflow:visible}
 @media(max-width:650px){#os-mix-28 main[data-studio-editor]{scroll-padding-top:140px}}
+
+/* Record playback, explicit audio loading, compact lyric review and instrumental creation. */
+#os-mix-28 #studio-player .sp-cover{width:54px;height:54px;flex-basis:54px;border-radius:50%;overflow:visible;background:transparent}
+#os-mix-28 .sp-vinyl,#os-mix-28 .studio-detail-vinyl{display:grid;place-items:center;position:relative;width:100%;height:100%;border-radius:50%;overflow:hidden;background:repeating-radial-gradient(circle,#111 0 2px,#303034 3px,#17171a 4px);box-shadow:0 2px 10px #0009,inset 0 0 0 2px #3e3e43;animation:os-record-turn 9s linear infinite;animation-play-state:paused}
+#os-mix-28 #studio-player .sp-vinyl>img,#os-mix-28 .studio-detail-vinyl>img{position:absolute;inset:21.5%;width:57%;height:57%;border-radius:50%;object-fit:cover}
+#os-mix-28 .sp-vinyl::after,#os-mix-28 .studio-detail-vinyl::after{content:"";position:absolute;inset:46%;border-radius:50%;background:#141416;border:1px solid #ddd8;z-index:2}
+#os-mix-28 .sp-vinyl>[data-player-cover-fallback]{display:grid;place-items:center;width:57%;height:57%;border-radius:50%;background:linear-gradient(140deg,#e4b37c,#98516d);color:#271b26}
+#os-mix-28 .sp-vinyl>[data-player-cover-fallback][hidden]{display:none}
+#os-mix-28 #studio-player[data-playing=true] .sp-vinyl,#os-mix-28 [data-record-song][data-playing=true] .studio-detail-vinyl{animation-play-state:running}
+#os-mix-28 .studio-detail-art{border-radius:50%;background:transparent;overflow:visible}
+#os-mix-28 .studio-detail-vinyl>svg{width:25%;height:25%;color:#cfb38e;background:#433844;border-radius:50%;padding:8%}
+#os-mix-28 #studio-player .sp-loading-panel{position:absolute;bottom:calc(100% + 16px);left:50%;transform:translateX(-50%);width:min(410px,calc(100vw - 32px));display:flex;align-items:center;gap:18px;padding:22px;background:#202026;border:1px solid #44444d;border-radius:18px;box-shadow:0 15px 60px #0009;color:#f3f0eb}
+#os-mix-28 #studio-player .sp-loading-panel[hidden],#os-mix-28 .studio-song-loading[hidden]{display:none}
+#os-mix-28 .sp-loading-spinner{display:block;flex:none;width:30px;height:30px;border:3px solid #ffffff24;border-top-color:#e8c9a4;border-radius:50%;animation:os-record-turn .8s linear infinite}
+#os-mix-28 .sp-loading-panel>div{flex:1;min-width:0}
+#os-mix-28 .sp-loading-panel p{margin:5px 0;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#os-mix-28 .sp-loading-panel small,#os-mix-28 .studio-song-loading small{font-size:12px;color:#b3b1bd}
+#os-mix-28 #studio-player .sp-loading-panel>button{width:auto;flex:none;font-size:12px;padding:8px;color:#ddd}
+#os-mix-28 #studio-player[data-loading=true] [data-player=play] svg{animation:os-record-turn 1s linear infinite}
+#os-mix-28 .studio-song-loading{position:fixed;inset:0;z-index:950;display:grid;place-items:center;background:#08080bb3;backdrop-filter:blur(5px)}
+#os-mix-28 .studio-song-loading-card{display:flex;flex-direction:column;align-items:center;gap:15px;width:min(390px,calc(100vw - 32px));padding:35px 25px;border:1px solid #44444d;border-radius:20px;background:#202026;box-shadow:0 15px 60px #0008;text-align:center}
+#os-mix-28 .studio-song-loading-card h2{font-size:18px;margin:0}
+#os-mix-28 .studio-song-loading-card p{margin:0;font-size:14px}
+#os-mix-28 .studio-song-loading-card button{margin-top:6px;padding:8px 24px;border-radius:20px;background:#35353d}
+#os-mix-28 .studio-instrumental-toggle{display:inline-flex;align-items:center;gap:6px;border:1px solid #494952;border-radius:22px;padding:7px 12px;background:transparent;color:#c2c1cb;font-size:12px;white-space:nowrap}
+#os-mix-28 .studio-instrumental-toggle[aria-checked=true]{background:#e9d4b6;border-color:#e9d4b6;color:#211b16}
+#os-mix-28 .studio-instrumental-toggle svg{width:14px;height:14px}
+#os-mix-28.is-instrumental-create .studio-lyrics-card,#os-mix-28.is-instrumental-create #studio-custom-voice,#os-mix-28.is-instrumental-create label[for=studio-custom-voice]{display:none}
+#os-mix-28 .is-song-loading .studio-candidate-art{position:relative;background:linear-gradient(135deg,#24232c,#38323e)}
+#os-mix-28 .is-song-loading .studio-candidate-art::after{content:"";position:absolute;inset:calc(50% - 10px);border:2px solid #fff3;border-top-color:#e8c9a4;border-radius:50%;animation:os-record-turn .8s linear infinite}
+#os-mix-28 #studio-dialog[open]:has([data-studio-content=score]:not([hidden])){width:min(760px,calc(100vw - 32px));max-height:82dvh}
+#os-mix-28 #studio-dialog[open]:has(#studio-lyric-approval:not([hidden])){width:min(660px,calc(100vw - 32px));height:min(620px,82dvh)}
+#os-mix-28 #lyric-lines{height:230px;max-height:230px;min-height:120px}
+@keyframes os-record-turn{to{transform:rotate(360deg)}}
+@media(max-width:650px){#os-mix-28 #studio-player .sp-cover{width:36px;height:36px;flex-basis:36px}#os-mix-28 .studio-instrumental-toggle{font-size:11px;padding:6px 8px}}
+@media(prefers-reduced-motion:reduce){#os-mix-28 .sp-vinyl,#os-mix-28 .studio-detail-vinyl{animation-duration:30s}}
+
+#os-mix-28 #studio-player .sp-cover .sp-vinyl{position:absolute;inset:0;width:100%;height:100%}
+#os-mix-28 .studio-detail-art{position:relative}
+#os-mix-28 .studio-detail-art>.studio-detail-vinyl{position:absolute;inset:0;width:100%;height:100%}
+#os-mix-28 #studio-global-status{pointer-events:none}
+
+#os-mix-28 #lyric-lines{position:relative;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;padding:12px 8px;scroll-padding:50px;background:#141418;border-radius:12px}
+#os-mix-28 #lyric-lines .lyric-line{display:block;width:100%;margin:0;padding:9px 14px;border:0;border-radius:8px;background:transparent;text-align:center;font-size:15px;line-height:1.6;color:#a9a6b3;white-space:normal}
+#os-mix-28 #lyric-lines .lyric-line.singing{background:#393742;color:#eee3ff;font-weight:600}
+#os-mix-28 .lyric-heading{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#os-mix-28 .lyric-heading>div{margin-right:auto}
+#os-mix-28 .lyric-heading h2{margin:0;font-size:18px}
+#os-mix-28 #lyric-status{font-size:12px;color:#aaa6b4;line-height:1.5}
+#os-mix-28 .lyric-panel{margin-bottom:24px}

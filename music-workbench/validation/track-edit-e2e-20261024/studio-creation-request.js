@@ -59,7 +59,7 @@ export function creationProgress(value){
  if(complete)return '已有完整歌曲可试听，另一版仍在生成';
  if(candidates.some(c=>c.media?.stream))return '已可试听，模型正在完成整首歌曲';
  if(candidates.some(c=>c.status==='done'))return '模型已完成，正在接收完整音频';
- return candidates.length?'模型正在生成歌曲，请稍候':'正在创作歌词，请稍候';
+ return batch.instrumental?'正在生成纯音乐，请稍候':candidates.length?'模型正在生成歌曲，请稍候':'正在创作歌词，请稍候';
 }
 export function candidateProgress(candidate,fallback){
  if(candidate.media?.complete||candidate.download_ready)return fallback;

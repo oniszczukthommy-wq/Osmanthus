@@ -64,7 +64,7 @@ await test('corrupt local record is blocked instead of silently replaced',async(
 const source=await readFile(new URL('./studio.js',import.meta.url),'utf8');
 await test('real form disables song creation during AI rewrite despite nonempty lyrics',async()=>{
  const nodes={'studio-generate-song':{},'studio-write-lyrics':{},'studio-custom-lyrics':{value:'旧歌词'},'studio-simple-prompt':{value:'创作想法'}};
- const context={creationRecovery:{state:{working:false,pending:null}},generationIsBlocked,creating:false,lyricsRequest:'rewrite',mode:'advanced',$:id=>nodes[id]};
+ const context={creationRecovery:{state:{working:false,pending:null}},generationIsBlocked,creating:false,lyricsRequest:'rewrite',mode:'advanced',instrumental:false,all:()=>[],q:()=>null,$:id=>nodes[id]};
  const fn=source.slice(source.indexOf('function updateGenerateButton()'),source.indexOf('async function resumeCreation'));
  vm.runInNewContext(fn+';updateGenerateButton();',context);assert.equal(nodes['studio-generate-song'].disabled,true);assert.equal(nodes['studio-write-lyrics'].disabled,true);
  context.lyricsRequest=null;vm.runInNewContext('updateGenerateButton();',context);assert.equal(nodes['studio-generate-song'].disabled,false);
@@ -98,12 +98,27 @@ await test('stream, provider completion and full local download have distinct tr
 });
 await test('real generate action persists one draft request and never submits music before approval',async()=>{
  const values=new Map(),calls=[],shown=[],draft={id,stage:'ready'},nodes={'studio-create-status':{}};
- const context={creationRecovery:{state:{pending:null}},creating:false,lyricsRequest:null,mode:'advanced',creationBody:()=>payload,updateGenerateButton:()=>{},$:key=>nodes[key],crypto:{randomUUID:()=>id},drafts:[],lyricDraftId:null,
+ const context={creationRecovery:{state:{pending:null}},creating:false,lyricsRequest:null,instrumental:false,mode:'advanced',creationBody:()=>payload,updateGenerateButton:()=>{},$:key=>nodes[key],crypto:{randomUUID:()=>id},drafts:[],lyricDraftId:null,
  localStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},
  api:async(path,body)=>{assert.ok(values.has('osmanthus-pending-lyric-start'));calls.push({path,body});return draft;},showDraftReview:d=>shown.push(d),renderHomeCreation:()=>{}};
  const fn=source.slice(source.indexOf('async function generate('),source.indexOf('async function writeLyrics('));
  vm.runInNewContext(fn+';globalThis.result=generate();',context);await context.result;
  assert.equal(calls.length,1);assert.equal(calls[0].path,'/api/generation/drafts');assert.equal(calls[0].body.lyrics,payload.lyrics);assert.equal(shown[0],draft);assert.equal(context.creating,false);
+});
+await test('instrumental directly starts one recoverable pair and never creates a lyric draft',async()=>{
+ const calls=[],accepted=[],nodes={'studio-create-status':{}},values=new Map(),flow={id,batch_id:id,stage:'generating',batch:{instrumental:true,candidates:[]}};
+ const context={creating:false,lyricsRequest:null,instrumental:true,mode:'simple',creationBody:()=>({prompt:'安静的钢琴',mode:'simple',instrumental:true}),updateGenerateButton:()=>{},$:k=>nodes[k],
+  creationRecovery:{state:{pending:null},start:async body=>{calls.push(body);return{kind:'accepted',flow};}},acceptCreationFlow:value=>accepted.push(value),refresh:async()=>{},creationProgress,
+  localStorage:{removeItem:key=>values.delete(key)},api:()=>{throw Error('instrumental must not call lyric draft API');},lyricDraftId:'old'};
+ const fn=source.slice(source.indexOf('async function generate('),source.indexOf('async function writeLyrics('));
+ vm.runInNewContext(fn,context);await context.generate();assert.equal(calls.length,1);assert.equal(calls[0].instrumental,true);assert.equal(accepted.length,1);assert.equal(context.lyricDraftId,null);assert.equal(context.creating,false);
+});
+await test('instrumental payload excludes retained lyrics and vocal settings without erasing them',async()=>{
+ const nodes={'studio-simple-prompt':{value:'雨后钢琴'},'studio-custom-lyrics':{value:'保留的歌词'},'studio-custom-style':{value:'轻柔民谣'},'studio-custom-title':{value:'雨后'},'studio-custom-voice':{value:'男声'}};
+ const context={instrumental:true,mode:'advanced',$:id=>nodes[id]};
+ vm.runInNewContext(source.slice(source.indexOf('function creationBody()'),source.indexOf('function setInstrumental(')),context);
+ const body=context.creationBody();assert.equal(body.instrumental,true);assert.equal(body.title,'雨后');assert.equal('lyrics' in body,false);assert.equal('voice' in body,false);assert.equal(nodes['studio-custom-lyrics'].value,'保留的歌词');
+ context.instrumental=false;assert.equal(context.creationBody().lyrics,'保留的歌词');
 });
 await test('approval saves edited lyrics before confirming returned version and fingerprint',async()=>{
  const calls=[],nodes={'studio-confirm-lyrics':{},'studio-review-title':{value:'edited title'},'studio-review-lyrics':{value:'edited lyrics'},'studio-dialog':{close:()=>{}},'studio-create-status':{}};
@@ -119,7 +134,7 @@ await test('rejected lyric request can be corrected while uncertain requests ret
  const fn=source.slice(source.indexOf('async function generate('),source.indexOf('async function writeLyrics('));
  for(const status of [422,500,undefined]){
   const values=new Map(),calls=[],nodes={'studio-create-status':{}},draft={id,stage:'ready'};let reject=true;
-  const context={creationRecovery:{state:{pending:null}},creating:false,lyricsRequest:null,mode:'advanced',creationBody:()=>payload,updateGenerateButton:()=>{},$:key=>nodes[key],crypto:{randomUUID:()=>id},drafts:[],lyricDraftId:null,
+  const context={creationRecovery:{state:{pending:null}},creating:false,lyricsRequest:null,instrumental:false,mode:'advanced',creationBody:()=>payload,updateGenerateButton:()=>{},$:key=>nodes[key],crypto:{randomUUID:()=>id},drafts:[],lyricDraftId:null,
    localStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},api:async(path,body)=>{calls.push(body);if(reject)throw error(status);return draft;},showDraftReview:()=>{},renderHomeCreation:()=>{}};
   vm.runInNewContext(fn+';globalThis.result=generate();',context);await assert.rejects(context.result);
   assert.equal(values.has('osmanthus-pending-lyric-start'),status!==422);
@@ -180,7 +195,7 @@ await test('hidden legacy recovery still resolves before a new lyric draft and n
  const fn=source.slice(source.indexOf('async function generate('),source.indexOf('async function writeLyrics('));
  for(const outcome of ['accepted','cancelled','unknown']){
   const calls=[],values=new Map(),nodes={'studio-create-status':{}};
-  const context={creating:false,lyricsRequest:null,mode:'advanced',creationBody:()=>payload,updateGenerateButton:()=>{},$:key=>nodes[key],crypto:{randomUUID:()=>id},drafts:[],lyricDraftId:null,
+  const context={creating:false,lyricsRequest:null,instrumental:false,mode:'advanced',creationBody:()=>payload,updateGenerateButton:()=>{},$:key=>nodes[key],crypto:{randomUUID:()=>id},drafts:[],lyricDraftId:null,
    localStorage:{getItem:k=>values.get(k)||null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)},
    creationRecovery:{state:{pending:{id}},inspect:async()=>{calls.push('inspect');if(outcome==='unknown')throw error(500);return{kind:outcome==='accepted'?'accepted':'missing'};},cancel:async()=>{calls.push('cancel');return{kind:'cancelled'};}},
    api:async(path)=>{calls.push(path);return{id,stage:'ready'};},showDraftReview:()=>{},renderHomeCreation:()=>{},refresh:async()=>{calls.push('refresh');}};

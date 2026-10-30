@@ -12,13 +12,13 @@ export function isPlaybackSpace(event,{modalOpen=false}={}){
 }
 
 export function createPlaybackQueue(engine,{onChange=()=>{}}={}){
- let serial=0,queued=null,working=false,destroyed=false;
+ let serial=0,queued=null,working=false,destroyed=false,activeToken=null;
  function cancelPending(){serial++;if(queued){queued.resolve({superseded:true});queued=null;}}
  function pause(){cancelPending();engine.transport.pause();onChange();}
  async function drain(){
   if(working||destroyed)return;working=true;onChange();
   try{while(queued&&!destroyed){
-   const op=queued;queued=null;
+   const op=queued;queued=null;activeToken=op.token;
    try{
     await engine.transport.unlock?.();
     if(op.token!==serial){op.resolve({superseded:true});continue;}
@@ -41,7 +41,7 @@ export function createPlaybackQueue(engine,{onChange=()=>{}}={}){
   if(queued)queued.resolve({superseded:true});
   return new Promise((resolve,reject)=>{queued={id,at,token:++serial,resolve,reject};void drain();});
  }
- return {playSong,pause,cancelPending,get working(){return working;},destroy(){destroyed=true;cancelPending();}};
+ return {playSong,pause,cancelPending,get loading(){return !!queued||(working&&activeToken===serial);},get working(){return working;},destroy(){destroyed=true;cancelPending();}};
 }
 
 export function mixOverviewPeaks(project,trackBuffers,points=190){
@@ -78,7 +78,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  document.getElementById('studio-player')?.remove();
  const footer=document.createElement('footer');footer.id='studio-player';footer.className='rs-player ng-transport sp-player';footer.setAttribute('aria-label','歌曲播放器');
  footer.innerHTML=`<div class="sp-now">
- <button type="button" class="sp-cover studio-player-cover" data-player="details" aria-label="查看当前歌曲详情" title="歌曲详情"><img data-player-cover alt="" hidden><span data-player-cover-fallback aria-hidden="true">${icon('music-2')}</span></button>
+ <button type="button" class="sp-cover studio-player-cover" data-player="details" aria-label="查看当前歌曲详情" title="歌曲详情"><span class="sp-vinyl"><img data-player-cover alt="" hidden><span data-player-cover-fallback aria-hidden="true">${icon('music-2')}</span></span></button>
  <button type="button" class="sp-song-name" data-player="details" aria-label="查看当前歌曲详情"><strong data-player-title>选择一首歌</strong><span data-player-subtitle></span></button></div>
  <div class="sp-center"><div class="sp-controls" aria-label="播放控制">
  <button type="button" data-player="shuffle" aria-label="开启随机播放" aria-pressed="false" title="随机播放">${icon('shuffle')}</button>
@@ -95,13 +95,14 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  <button type="button" data-player="mute" aria-label="播放器静音" aria-pressed="false" title="静音">${icon('volume-2')}</button><input data-player-volume type="range" min="0" max="100" step="1" value="100" aria-label="播放器音量">
  <button type="button" data-player="details-toggle" aria-label="展开歌曲详情" aria-expanded="false" title="展开歌曲详情">${icon('panel-right')}</button></div>
  <span class="sp-status" data-player-status role="status" aria-live="polite" hidden></span>
+ <section class="sp-loading-panel" data-player-loading role="status" aria-live="polite" hidden><span class="sp-loading-spinner" aria-hidden="true"></span><div><strong>正在加载歌曲</strong><p data-player-loading-title></p><small>音频准备好后自动播放</small></div><button type="button" data-player="cancel-loading" aria-label="取消歌曲加载">取消</button></section>
  <canvas data-player-wave aria-hidden="true" hidden></canvas>
  <div class="studio-player-menu" role="menu" hidden><button role="menuitem" type="button" data-player="edit">${icon('pencil-line')}编辑歌曲</button><button role="menuitem" type="button" data-player="share">${icon('share-2')}分享歌曲</button><button role="menuitem" type="button" data-player="copy" ${onCopyShare?'':'hidden'}>${icon('link')}复制分享链接</button><button role="menuitem" type="button" data-player="export">${icon('download')}导出歌曲</button></div>`;
  root.append(footer);
  const q=selector=>footer.querySelector(selector),playButton=q('[data-player="play"]'),seek=q('[data-player-seek]'),volume=q('[data-player-volume]'),seekTrack=q('.sp-seek-track'),menu=q('.studio-player-menu');
  const icons=()=>globalThis.lucide?.createIcons({attrs:{width:18,height:18}});
  let preview=null,sourceKind='engine',loop=false,shuffle=false,scrubbing=false,scrubProject=null,seekTimer=null,lastNonzero=1,metadataKey='',stateKey='',lastPlaying=false,lastTime=0,lastId=null,frame=0,lastFrame=0,closed=false,manualPause=false,pendingLoop=false;
- let pendingMessage='',lastEngineProjectId=null,nativeIntent=0,shuffleBag=[],shuffleContext='',shuffleHistory=[];
+ let pendingMessage='',lastEngineProjectId=null,nativeIntent=0,shuffleBag=[],shuffleContext='',shuffleHistory=[],nativeLoading=null;
  const registeredSongs=new Map(),ownedAudio=new Map(),nativeRequests=new WeakMap();
  const songById=id=>getSong?.(id)||getSongs().find(s=>s.id===id)||registeredSongs.get(id)||null;
  const controller=createPlaybackQueue(engine,{onChange:()=>paint(true)});
@@ -143,17 +144,18 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   image.alt=`${song.title||'歌曲'}封面`;image.onload=()=>{if(image.dataset.source===url){image.hidden=false;fallback.hidden=true;}};
   image.onerror=()=>{image.hidden=true;fallback.hidden=false;};image.src=url;
  }
- function cancelPending(){nativeIntent++;controller.cancelPending();clearTimeout(seekTimer);}
+ function cancelPending(){nativeIntent++;nativeLoading=null;controller.cancelPending();clearTimeout(seekTimer);}
  function pause(){manualPause=true;pendingMessage='';cancelPending();controller.pause();if(preview)preview.pause();paint(true);}
  async function playPreview(audio,{at}={}){
   cancelPending();const token=nativeIntent;nativeRequests.set(audio,token);
   manualPause=false;pendingMessage='';if(preview&&preview!==audio)preview.pause();preview=audio;sourceKind='preview';controller.pause();
+  nativeLoading=audio;paint(true);
   audio.muted=false;audio.volume=engine.transport.state().volume;
   const resumeAt=at??(audio.dataset.playerResumeAt!==undefined?Number(audio.dataset.playerResumeAt):undefined);delete audio.dataset.playerResumeAt;
   if(resumeAt!==undefined||audio.ended){const value=Math.max(0,Number(resumeAt)||0);try{audio.currentTime=Number.isFinite(audio.duration)?Math.min(audio.duration,value):value;}catch{audio.addEventListener('loadedmetadata',()=>{if(token===nativeIntent)audio.currentTime=Math.min(audio.duration,value);},{once:true});}}
   try{await audio.play();if(token!==nativeIntent){if(nativeRequests.get(audio)===token)audio.pause();return{superseded:true};}paint(true);return{played:true,project_id:audio.dataset.candidate};}
   catch(error){if(token!==nativeIntent)return{superseded:true};throw error;}
-  finally{if(nativeRequests.get(audio)===token)nativeRequests.delete(audio);}
+  finally{if(nativeRequests.get(audio)===token)nativeRequests.delete(audio);if(token===nativeIntent&&nativeLoading===audio)nativeLoading=null;paint(true);}
  }
  async function playSong(id,options={}){
   const state=current();
@@ -164,6 +166,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   const result=await controller.playSong(id,options);paint(true);return result;
  }
  async function toggle(){
+  if(controller.loading||nativeLoading){pause();return;}
   const state=current();pendingMessage='';if(state.playing){pause();return;}
   manualPause=false;
   if(state.kind==='preview')return playPreview(preview);
@@ -207,6 +210,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  function emitAction(name,callback){closeMenu();const state=current();if(!state.id)return;const detail=detailFor(state);if(callback)void safe(async()=>{await callback(detail);paint(true);});else root.dispatchEvent(new CustomEvent('osmanthus:'+name,{detail,bubbles:true}));}
  function onClick(event){const button=event.target.closest('[data-player]');if(!button)return;const action=button.dataset.player;
   if(action==='play')void safe(toggle);if(action==='previous')void safe(()=>skip(-1));if(action==='next')void safe(()=>skip(1));
+  if(action==='cancel-loading')pause();
   if(action==='shuffle'){shuffle=!shuffle;shuffleBag=[];shuffleHistory=[];paint(true);}
   if(action==='mute'){const state=current();changeVolume(state.volume>0?0:lastNonzero);}
   if(action==='loop'){loop=!loop;paint(true);}
@@ -230,6 +234,8 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   if(preview&&preview!==audio)preview.pause();manualPause=true;controller.pause();sourceKind='preview';preview=audio;manualPause=false;pendingMessage='';audio.volume=engine.transport.state().volume;paint(true);
  }
  document.addEventListener('play',onNativePlay,true);
+ function onNativeBuffer(event){if(event.target!==preview)return;if(['waiting','stalled','loadstart'].includes(event.type)){if(!preview.paused)nativeLoading=preview;}else if(nativeLoading===preview)nativeLoading=null;paint(true);}
+ const bufferEvents=['waiting','stalled','loadstart','playing','canplay','pause','ended','error'];for(const type of bufferEvents)document.addEventListener(type,onNativeBuffer,true);
  const previousPausePreviews=window.pauseGenerationPreview;
  const pauseAllPreviews=()=>{previousPausePreviews?.();if(preview)preview.pause();};
  window.pauseGenerationPreview=pauseAllPreviews;
@@ -237,11 +243,13 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  function onKey(event){if(event.key==='Escape')closeMenu();if(isPlaybackSpace(event,{modalOpen:!!document.querySelector('dialog[open]')})){event.preventDefault();void safe(toggle);}}
  document.addEventListener('click',onDocumentClick);document.addEventListener('keydown',onKey);
  function paint(force=false){
-  if(closed)return;const state=current(),song=state.song||{},busy=controller.working;
-  if(footer.dataset.playing!==String(state.playing))footer.dataset.playing=String(state.playing);
+  if(closed)return;const state=current(),song=state.song||{},busy=controller.loading||!!nativeLoading;
+  if(footer.dataset.playing!==String(state.playing&&!busy))footer.dataset.playing=String(state.playing&&!busy);
+  for(const record of root.querySelectorAll('[data-record-song]'))record.dataset.playing=String(record.dataset.recordSong===state.id&&state.playing&&!busy);
+  footer.dataset.loading=String(busy);q('[data-player-loading]').hidden=!busy;q('[data-player-loading-title]').textContent=studio.displaySongTitle?.(song.title)||song.title||'正在准备音频…';
   const mk=JSON.stringify([state.id,song.title,song.cover_url,song.artwork,state.kind,song.candidate_label]);
   if(mk!==metadataKey){metadataKey=mk;q('[data-player-title]').textContent=studio.displaySongTitle?.(song.title)||song.title||'选择一首歌';q('[data-player-subtitle]').textContent=state.kind==='preview'?song.style||song.candidate_label||'原始歌曲':song.style||'当前作品';footer.dataset.songId=state.id||'';footer.dataset.source=state.kind;updateCover(song);}
-  setIcon(playButton,state.playing?'pause':'play');playButton.setAttribute('aria-label',state.playing?'暂停歌曲':'播放歌曲');playButton.setAttribute('aria-pressed',String(state.playing));playButton.disabled=!state.id;
+  setIcon(playButton,busy?'loader-circle':state.playing?'pause':'play');playButton.setAttribute('aria-label',busy?'取消歌曲加载':state.playing?'暂停歌曲':'播放歌曲');playButton.setAttribute('aria-pressed',String(state.playing));playButton.disabled=!state.id;
   const like=q('[data-player="favorite"]'),liked=!!song.favorite;like.setAttribute('aria-pressed',String(liked));like.setAttribute('aria-label',liked?'取消收藏当前歌曲':'收藏当前歌曲');
   const random=q('[data-player="shuffle"]');random.setAttribute('aria-pressed',String(shuffle));random.setAttribute('aria-label',shuffle?'关闭随机播放':'开启随机播放');
   const repeat=q('[data-player="loop"]');repeat.setAttribute('aria-pressed',String(loop));repeat.setAttribute('aria-label',loop?'关闭单曲循环':'开启单曲循环');
@@ -252,7 +260,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   seek.disabled=!state.ready||busy||!state.duration;seek.max=state.duration||0;
   if(!scrubbing){seek.value=Math.min(state.duration,state.time)||0;q('[data-player-position]').textContent=clock(state.time);paintProgress(state.time,state.duration);}
   seek.setAttribute('aria-valuetext',`${clock(state.time)}，共${clock(state.duration)}`);q('[data-player-duration]').textContent=clock(state.duration);
-  const text=(studio.statusIsTransient?.(pendingMessage)?'':pendingMessage)||(busy?'正在载入歌曲…':'');q('[data-player-status]').hidden=!text;if(q('[data-player-status]').textContent!==text)q('[data-player-status]').textContent=text;
+  const text=studio.statusIsTransient?.(pendingMessage)?'':pendingMessage;q('[data-player-status]').hidden=!text;if(q('[data-player-status]').textContent!==text)q('[data-player-status]').textContent=text;
   const sk=JSON.stringify([state.id,state.kind,state.playing,busy]);if(sk!==stateKey){stateKey=sk;onStateChange?.({...state,busy});root.dispatchEvent(new CustomEvent('osmanthus:playback',{detail:{id:state.id,kind:state.kind,playing:state.playing,busy},bubbles:true}));}
   const ended=lastId===state.id&&lastPlaying&&!state.playing&&!manualPause&&!busy&&state.duration>0&&state.time>=state.duration-.08&&lastTime<state.duration;
   lastPlaying=state.playing;lastTime=state.time;lastId=state.id;
@@ -260,6 +268,6 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  }
  function tick(now){if(closed)return;frame=requestAnimationFrame(tick);if(now-lastFrame<40)return;lastFrame=now;paint();}
  icons();paint(true);frame=requestAnimationFrame(tick);
- const result={playSong,pause,cancelPending,registerPreviewSong,sync:()=>paint(true),get state(){return{...current(),busy:controller.working,loop,shuffle};},destroy(){closed=true;cancelPending();controller.destroy();cancelAnimationFrame(frame);clearTimeout(seekTimer);for(const audio of ownedAudio.values()){audio.pause();audio.removeAttribute('src');audio.load();audio.remove();}ownedAudio.clear();if(window.pauseGenerationPreview===pauseAllPreviews)window.pauseGenerationPreview=previousPausePreviews;footer.removeEventListener('click',onClick);document.removeEventListener('play',onNativePlay,true);document.removeEventListener('click',onDocumentClick);document.removeEventListener('keydown',onKey);footer.remove();}};
+ const result={playSong,pause,cancelPending,registerPreviewSong,sync:()=>paint(true),get state(){return{...current(),busy:controller.loading||!!nativeLoading,loop,shuffle};},destroy(){closed=true;cancelPending();controller.destroy();cancelAnimationFrame(frame);clearTimeout(seekTimer);for(const audio of ownedAudio.values()){audio.pause();audio.removeAttribute('src');audio.load();audio.remove();}ownedAudio.clear();if(window.pauseGenerationPreview===pauseAllPreviews)window.pauseGenerationPreview=previousPausePreviews;footer.removeEventListener('click',onClick);for(const type of bufferEvents)document.removeEventListener(type,onNativeBuffer,true);document.removeEventListener('play',onNativePlay,true);document.removeEventListener('click',onDocumentClick);document.removeEventListener('keydown',onKey);footer.remove();}};
  Object.defineProperty(window,'osmanthusPlaybackState',{configurable:true,get:()=>result.state});return result;
 }

@@ -45,6 +45,7 @@ class GenerationDrafts:
         with self.lock:return [self.public(d) for d in sorted(self.drafts.values(),key=lambda d:d['created_at'],reverse=True)]
 
     def start(self,body):
+        if body.get('instrumental'):raise ValueError('纯音乐无需歌词草稿，请直接生成纯音乐')
         fields=request_fields(body);identifier=fields['request_id']
         with self.lock:
             if identifier in self.drafts:

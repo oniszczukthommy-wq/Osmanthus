@@ -1,8 +1,8 @@
-"""Explicit one-click creation, with optional AI lyrics, over the real pair engine.
+"""Durable direct instrumental creation and recovery of earlier requests.
 
-The user chose this flow in place of mandatory lyric approval. A durable request
-records that choice before music work starts; it does not fabricate an approval
-draft or bypass the existing provider submission/recovery safeguards.
+New vocal songs go through GenerationDrafts and explicit lyric approval at the
+HTTP boundary. Instrumental songs need neither lyrics nor approval; both paths
+reuse the pair engine and provider submission/recovery safeguards.
 """
 from __future__ import annotations
 import copy,json,os,re,time
@@ -44,16 +44,17 @@ def fields(body):
     if mode not in ('simple','advanced'):raise ValueError('请选择简单或高级创作模式')
     instrumental=body.get('instrumental',False)
     if not isinstance(instrumental,bool):raise ValueError('纯器乐选项无效')
-    if instrumental:raise ValueError('当前音乐接口尚未验证纯器乐生成，请使用带演唱的歌曲')
     brief=idea(body,required=mode=='simple')
     style=text(body.get('style',''),'风格',1000) or default_style(brief)
     voice=text(body.get('voice',''),'人声描述',240) or AUTO_VOICE
     title=text(body.get('title',''),'歌名',120)
     lyrics=text(body.get('lyrics',''),'歌词',5000)
     if mode=='simple' and lyrics:raise ValueError('自填歌词请使用高级模式，避免歌词被忽略')
-    if mode=='advanced' and not lyrics:raise ValueError('请填写歌词，或使用 AI 写词后再生成')
-    if not brief:brief='按照用户填写的歌词、风格与人声要求创作完整原创歌曲'
+    if mode=='advanced' and not lyrics and not instrumental:raise ValueError('请填写歌词，或使用 AI 写词后再生成')
+    if instrumental and lyrics:raise ValueError('纯音乐不接受歌词，请关闭纯音乐后使用自填歌词')
+    if not brief:brief='按照用户指定的风格和配器创作完整纯音乐' if instrumental else '按照用户填写的歌词、风格与人声要求创作完整原创歌曲'
     payload={'request_id':body.get('request_id'),'brief':brief,'style':style,'voice':voice}
+    if instrumental:payload['instrumental']=True
     if lyrics:payload['lyrics']=lyrics
     if title:payload['title']=title
     elif lyrics:payload['title']=title_from_lyrics(lyrics)
@@ -150,8 +151,8 @@ class CreationFlow:
                 return self.public(state)
             if identifier in self.pairs.batches or identifier in self.workflow.jobs or identifier in self.drafts.drafts:
                 raise RuntimeError('request_id 已用于其他创作任务')
-            if self.workflow.running or self.pairs.drafting:raise RuntimeError('已有生成或分轨任务，请等待完成')
-            if not os.environ.get('YINCHAO_API_KEY') or (mode=='simple' and not os.environ.get('DEEPSEEK_API_KEY')):
+            if self.workflow.creation_busy() or self.pairs.drafting:raise RuntimeError('已有生成或分轨任务，请等待完成')
+            if not os.environ.get('YINCHAO_API_KEY') or (mode=='simple' and not payload.get('instrumental') and not os.environ.get('DEEPSEEK_API_KEY')):
                 raise ValueError('本机生成服务尚未配置')
             state={'id':identifier,'mode':mode,'payload':payload,'request_fingerprint':fingerprint,
                    'created_at':time.time(),'policy':POLICY,'state':'authorized','error':None}

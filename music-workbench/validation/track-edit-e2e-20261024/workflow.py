@@ -92,11 +92,20 @@ class Workflow:
                 if valid_id(job['id']):self.jobs[job['id']]=job
             except (ValueError,KeyError):continue
 
+    def creation_busy(self):
+        # Provider-complete, unselected songs may still be downloading. They
+        # incur no new generation and must not prevent the next creation.
+        # Active generation, planning, and selected project preparation keep
+        # the original admission guard.
+        with self.lock:
+            return any(identifier not in self.jobs or self.jobs[identifier].get('status')!='done' or
+                       self.jobs[identifier].get('selected_for_preparation') for identifier in self.running)
+
     def public(self,job):
         with STREAM.LOCK:
             result=STREAM.public(job)
             result.update({k:job.get(k) for k in ('stage','brief','style','voice','voice_control','voice_exact_identity','lyrics','prompt','origin','project_id','pipeline_error','preparation_seconds')})
-            result.update({k:job.get(k) for k in ('batch_id','candidate_slot','selected_for_preparation')})
+            result.update({k:job.get(k) for k in ('batch_id','candidate_slot','selected_for_preparation','instrumental')})
             result['project_ready']=job.get('stage')=='ready'
             result.update(voice_listening_acceptance(job))
             duration=job.get('duration_seconds')
@@ -225,7 +234,7 @@ class Workflow:
                 if not source:raise ValueError('已有成品文件暂不可用，未提交付费生成')
                 shutil.copy2(source['path'],RUNS/job['id']/'complete.mp3')
             if not job.get('download_ready'):
-                if not job.get('lyrics'):self.stage(job,'lyrics');self.lyrics(job)
+                if not job.get('instrumental') and not job.get('lyrics'):self.stage(job,'lyrics');self.lyrics(job)
                 if job.get('submission_started') and not job.get('task_id'):
                     raise RuntimeError('上次提交结果不确定，已停止自动重发以避免重复扣费')
                 self.stage(job,'generating',error=None,generation_error=None,pipeline_error=None)
@@ -255,6 +264,8 @@ class Workflow:
                 result=subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,timeout=1200)
             if result.returncode:raise RuntimeError('分轨未完成，完整歌曲已保留；可只重试分轨，不重新生歌')
             meta=json.loads((directory/'preparation.json').read_text())
+            if job.get('instrumental'):
+                meta['instrumental']=True;save_json(directory/'preparation.json',meta)
             # Instantiate once to persist the canonical job ID as project ID.
             from project import Project
             project=Project(directory)

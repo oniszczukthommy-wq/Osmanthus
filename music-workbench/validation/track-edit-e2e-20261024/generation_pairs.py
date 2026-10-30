@@ -15,9 +15,14 @@ def request_fields(body):
     voice=str(body.get('voice',w.DEFAULT_VOICE)).strip()
     if not 3<=len(brief)<=2000:raise ValueError('创作要求需3至2000字')
     if not 1<=len(style)<=1000:raise ValueError('风格需1至1000字')
-    if not 1<=len(voice)<=240:raise ValueError('人声描述需1至240字')
+    instrumental=body.get('instrumental',False)
+    if not isinstance(instrumental,bool):raise ValueError('纯音乐选项需为布尔值')
+    if not instrumental and not 1<=len(voice)<=240:raise ValueError('人声描述需1至240字')
     fields={'request_id':identifier,'brief':brief,'style':style,'voice':voice}
-    if 'lyrics' in body:
+    if instrumental:
+        if body.get('lyrics'):raise ValueError('纯音乐不接受歌词，请关闭纯音乐后使用自填歌词')
+        fields.update(instrumental=True,voice='',lyrics='')
+    if 'lyrics' in body and not instrumental:
         lyrics=body['lyrics']
         if not isinstance(lyrics,str) or not 1<=len(lyrics.strip())<=5000:raise ValueError('自填歌词需1至5000字')
         fields['lyrics']=lyrics.strip()
@@ -48,6 +53,11 @@ def style_traits(brief,style):
     return '用简短可记忆的器乐动机呼应人声；配器有疏密变化，突出歌词与主旋律。','mc-arrangement-arch'
 
 def prompts(batch):
+    if batch.get('instrumental'):
+        base=f"纯器乐音乐，不含人声、演唱、说唱或哼唱。用户创作要求：{batch['brief']}\n用户指定风格：{batch['style']}。目标150至210秒，旋律有发展，配器层次清楚，自然收尾。"
+        enhanced=base+'\n编曲建议：围绕简短器乐主题组织段落，旋律与伴奏交替呼应，节奏和配器有疏密变化；保留用户所有配器限制。'
+        if len(enhanced)>3000:raise ValueError('生成提示词超过接口长度限制')
+        return {'A':{'prompt':base,'strategy':'baseline','skill_source':None},'B':{'prompt':enhanced,'strategy':'minimal_traits','skill_source':'mc-arrangement-arch'}}
     arrangement=f"用户创作要求：{batch['brief']}\n用户指定风格：{batch['style']}。完整演唱提供的歌词，目标150至210秒，自然收尾。"
     if len(arrangement)>3000:raise ValueError('创作描述与风格合计过长，生成提示词不能超过3000字符')
     base=w.compile_generation_prompt(arrangement,batch['voice'])
@@ -89,7 +99,7 @@ class GenerationPairs:
 
     def public(self,batch):
         with self.lock:
-            result={k:copy.deepcopy(batch.get(k)) for k in ('id','title','brief','style','voice','lyrics','created_at','policy','error','selected_candidate_id','creation_request_id','creation_mode')}
+            result={k:copy.deepcopy(batch.get(k)) for k in ('id','title','brief','style','voice','lyrics','instrumental','created_at','policy','error','selected_candidate_id','creation_request_id','creation_mode')}
             candidates=[]
             for slot,identifier in batch.get('candidate_ids',{}).items():
                 job=self.workflow.jobs.get(identifier)
@@ -128,10 +138,10 @@ class GenerationPairs:
                 if batch['request_fingerprint']!=digest(fields):raise RuntimeError('同一 request_id 不能用于不同创作要求')
                 return self.public(batch)
             if identifier in self.workflow.jobs:raise RuntimeError('request_id 已用于其他任务')
-            if self.workflow.running or self.drafting:raise RuntimeError('已有生成或分轨任务，请等待完成')
-            if not os.environ.get('YINCHAO_API_KEY') or (not fields.get('lyrics') and not os.environ.get('DEEPSEEK_API_KEY')):raise ValueError('本机生成服务尚未配置')
+            if self.workflow.creation_busy() or self.drafting:raise RuntimeError('已有生成或分轨任务，请等待完成')
+            if not os.environ.get('YINCHAO_API_KEY') or (not fields.get('instrumental') and not fields.get('lyrics') and not os.environ.get('DEEPSEEK_API_KEY')):raise ValueError('本机生成服务尚未配置')
             batch={**fields,'id':identifier,'request_fingerprint':digest(fields),'created_at':time.time(),
-                'title':fields.get('title','新歌曲'),'stage':'lyrics','policy':POLICY,'model':'v4.5','events':[],
+                'title':fields.get('title','器乐小景' if fields.get('instrumental') else '新歌曲'),'stage':'generating' if fields.get('instrumental') else 'lyrics','policy':POLICY,'model':'v4.5','events':[],
                 'candidate_ids':{},'attempts':{'A':[],'B':[]},'retry_requests':{},'selected_candidate_id':None,'error':None,
                 'requested_title':fields.get('title')}
             # A failed disk write must not leave a cached, non-durable batch that
@@ -153,6 +163,7 @@ class GenerationPairs:
             job={'id':identifier,'batch_id':batch['id'],'candidate_slot':slot,'selected_for_preparation':False,
                 'title':batch['title'],'brief':batch['brief'],'style':batch['style'],'voice':batch['voice'],
                 'model':batch['model'],'lyrics':batch['lyrics'],**strategies[slot],
+                **({'instrumental':True} if batch.get('instrumental') else {}),
                 'voice_control':'text_timbre_prompt','voice_exact_identity':False,'project_id':identifier,
                 'created_at':now,'status':'pending','stage':'generating','origin':'dual_generation',
                 'events':[],'first_stream_seconds':None,'first_play_seconds':None,'done_seconds':None,
@@ -161,7 +172,7 @@ class GenerationPairs:
 
     def draft(self,batch):
         try:
-            if not batch.get('lyrics'):
+            if not batch.get('instrumental') and not batch.get('lyrics'):
                 self.workflow.lyrics(batch,folder=self.directory/batch['id'],persist_result=False)
                 if batch.get('requested_title'):batch['title']=batch['requested_title']
             with self.lock:

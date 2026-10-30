@@ -1,8 +1,8 @@
 const el=id=>document.getElementById(id);
 export function lyricSource(current,generation,state,preview){
   if(generation&&!generation.project_ready&&generation.stage!=='error'&&(!state.playing||!preview.paused)){
-    return {key:'generation:'+generation.id,kind:'generation',id:generation.id,title:generation.title,lyrics:generation.lyrics||'',time:preview.currentTime||0};}
-  return current?{key:`project:${current.id}:${current.vocal_variant||'original'}:${current.source_sha256}`,kind:'project',id:current.id,title:current.title,time:state.currentTime}:null;
+    return {key:'generation:'+generation.id,kind:'generation',id:generation.id,title:generation.title,lyrics:generation.lyrics||'',...(generation.instrumental?{instrumental:true}:{}),time:preview.currentTime||0};}
+  return current?{key:`project:${current.id}:${current.vocal_variant||'original'}:${current.source_sha256}`,kind:'project',id:current.id,title:current.title,...(current.instrumental?{instrumental:true}:{}),time:state.currentTime}:null;
 }
 export function lineAt(lines,time){
   // Leave instrumental gaps unhighlighted. Repeated choruses retain distinct indices.
@@ -46,7 +46,7 @@ export function initializeLyrics({getProject,transport}){
     }catch(e){if(token!==serial)return;failed=true;el('lyric-retry').hidden=false;status(e.name==='TimeoutError'?'歌词同步连接超时，可重试；播放不受影响':e.message);pollAt=performance.now()+15000;}
     finally{if(token===serial)fetching=false;}
   }
-  function choose(){const current=getProject(),generation=window.generationWorkflowState?.job,state=transport.state();
+  function choose(){const playback=window.osmanthusPlaybackState;if(playback?.kind==='preview'&&playback.song?.instrumental)return {key:'preview:'+playback.id,kind:'generation',id:playback.id,title:playback.song.title,instrumental:true,time:playback.time||0};const current=getProject(),generation=window.generationWorkflowState?.job,state=transport.state();
     // The preview has its own clock until handoff; never highlight another song with it.
     return lyricSource(current,generation,state,preview);
   }
@@ -55,6 +55,8 @@ export function initializeLyrics({getProject,transport}){
     if(selected.key!==sourceKey){sourceKey=selected.key;serial++;fetching=false;failed=false;job=null;lines=[];pollAt=0;
       if(rows[active]){rows[active].classList.remove('singing');rows[active].removeAttribute('aria-current');}active=-1;previousLine=-1;
       showText(selected.lyrics||'');setTiming(null);setFollow(true);el('lyric-title').textContent=selected.title;status(selected.kind==='project'?'正在读取这首歌的歌词…':'正在生成歌词…');}
+    el('lyric-follow').disabled=!!selected.instrumental;
+    if(selected.instrumental){if(box.dataset.instrumental!=='true'){box.dataset.instrumental='true';box.replaceChildren();const p=document.createElement('p');p.textContent='纯音乐 · 不含演唱与歌词';box.append(p);}status('纯音乐，无需加载歌词');el('lyric-retry').hidden=true;el('lyric-clock').textContent=clock(selected.time);return;}delete box.dataset.instrumental;
     if(selected.kind==='generation'){showText(selected.lyrics);status('歌词随歌曲一并生成 · 演唱同步将在整曲分轨完成后准备');}
     else if(!fetching&&now>=pollAt)void load(selected,serial);
     const index=lineAt(lines,selected.time);
