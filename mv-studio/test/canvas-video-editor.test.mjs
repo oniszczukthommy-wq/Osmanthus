@@ -6,7 +6,8 @@ import path from 'node:path';
 import os from 'node:os';
 import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
-import {createCanvasVideoEditor} from '../canvas-video-editor.mjs';
+import {createCanvasVideoEditor,SUBTITLE_RENDERER_VERSION} from '../canvas-video-editor.mjs';
+import {selectSubtitleFont} from '../subtitle-fonts.mjs';
 
 const ff=mediaTools().ffmpeg,fp=mediaTools().ffprobe;
 const hash=file=>crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -79,4 +80,18 @@ test('服务重启将未完成任务标记失败且不自动执行，损坏成�
 test('素材解析只接受本机普通媒体文件；编码失败留下可查询任务且原片不变',async t=>{
  const f=fixture(t),original=hash(f.files.red),link=path.join(f.data,'link.mp4');fs.symlinkSync(f.files.red,link);const unsafe=createCanvasVideoEditor({...f.config,resolveAsset:()=>({file:link})});await assert.rejects(()=>unsafe.render(f.request()),/普通文件/);
  const failed=createCanvasVideoEditor({...f.config,ffmpeg:path.join(f.data,'missing-ffmpeg')}),job=await failed.render(f.request());assert.equal(job.status,'failed');assert.match(job.error,/编码器无法启动/);assert.equal(failed.get(job.id).status,'failed');assert.equal(hash(f.files.red),original);
+});
+
+test('中文字形与原换行写入真实成片，新渲染请求不复用legacy字幕而旧请求保持幂等',async t=>{
+ try{selectSubtitleFont('桂香入梦第二行',{fontPath:''});}catch{return t.skip('No installed font covers the CJK fixture');}
+ const f=fixture(t),text='桂香入梦\n第二行',input=f.request({clips:[{id:'silent',start:0,end:1.5}],ratio:'1:1',subtitles:[{start:0,end:1.2,text}]});
+ const first=await f.editor.render(input);assert.equal(first.status,'ready',first.error);assert.equal(first.subtitleRenderer.version,SUBTITLE_RENDERER_VERSION);
+ assert.equal(fs.readFileSync(path.join(f.data,'canvas-edits',first.id,'caption-0.txt'),'utf8'),text);
+ const pixels=frame(output(f,first),.5);assert.ok([...pixels].filter(v=>v>100).length>1500,'真实字幕应出现白色笔画');
+ assert.equal(fs.existsSync(path.join(f.data,'canvas-edits',first.id,'subtitle-font.ttf')),false,'系统字体不保留在导出记录里');
+ const record=path.join(f.data,'canvas-edits',first.id,'job.json'),stored=JSON.parse(fs.readFileSync(record)),{request_id,...content}=stored.input;
+ const canonical=value=>JSON.stringify(value,(_key,item)=>item&&typeof item==='object'&&!Array.isArray(item)?Object.fromEntries(Object.keys(item).sort().map(key=>[key,item[key]])):item);
+ delete stored.subtitleRenderer;stored.signature=crypto.createHash('sha256').update(canonical({input:content,sources:stored.sources})).digest('hex');fs.writeFileSync(record,JSON.stringify(stored));
+ const oldReplay=await f.editor.render(input);assert.equal(oldReplay.id,first.id);assert.equal(oldReplay.replayed,true);assert.equal(oldReplay.sha256,first.sha256);assert.equal(oldReplay.subtitleRenderer.version,'legacy-font-discovery');assert.match(oldReplay.message,/重新导出/);
+ const fresh=await f.editor.render({...input,request_id:crypto.randomUUID()});assert.equal(fresh.status,'ready',fresh.error);assert.notEqual(fresh.id,first.id);assert.equal(fresh.subtitleRenderer.version,SUBTITLE_RENDERER_VERSION);
 });

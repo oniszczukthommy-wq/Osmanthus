@@ -3,6 +3,7 @@ from pathlib import Path
 from copy import deepcopy
 from unittest.mock import patch
 import hashlib
+import fcntl
 import json
 import os
 import shutil
@@ -151,16 +152,24 @@ class StageCacheTests(unittest.TestCase):
                      'numbered-score.pdf', 'numbered-score.svg', 'score-melody.wav', 'original-vocal.wav'):
             (output / name).write_bytes(b'offline artifact fixture')
 
-    def run_job(self, force=False, analysis_source=None):
-        identifier = str(uuid.uuid4())
+    def run_job(self, force=False, analysis_source=None, identifier=None, fail_script=None):
+        identifier = identifier or str(uuid.uuid4())
         folder = self.jobs / identifier
-        write_json(folder / 'state.json', {**self.context, 'id': identifier, 'data_dir': str(self.data),
-                   'created_at': 2, 'stage': 'queued', 'force_recompute': force,
-                   'analysis_source_job_id': analysis_source})
+        if not (folder / 'state.json').exists():
+            write_json(folder / 'state.json', {**self.context, 'id': identifier, 'data_dir': str(self.data),
+                       'created_at': 2, 'stage': 'queued', 'force_recompute': force,
+                       'analysis_source_job_id': analysis_source})
         calls = []
         def run(command, **kwargs):
             script = Path(command[1]).name
             calls.append(script)
+            if script == fail_script:
+                self.assertNotEqual(kwargs['stdout'], subprocess.PIPE)
+                kwargs['stdout'].write(b'chunk 0 8: partial progress\n')
+                self.assertIn(b'partial progress', (folder / 'pipeline.log').read_bytes())
+                self.assertEqual(kwargs['env']['PYTHONUNBUFFERED'], '1')
+                self.assertEqual(kwargs['env']['MUSIC_GAME_CHUNK_SECONDS'], os.environ.get('MUSIC_GAME_CHUNK_SECONDS', '8'))
+                raise subprocess.TimeoutExpired(command, kwargs['timeout'])
             if script == 'game_onnx.py':
                 write_json(Path(command[command.index('--output') + 1]), self.raw)
             if script == 'run_tifa.py':
@@ -258,6 +267,75 @@ class StageCacheTests(unittest.TestCase):
             launch.return_value.poll.return_value = None
             manager.start(project, {'request_id': str(uuid.uuid4()), 'project_id': self.identifier})
         self.assertEqual(launch.call_args.kwargs['env']['MUSIC_GAME_CHUNK_SECONDS'], '8')
+
+    def test_cpu_stage_timeout_scales_with_song_duration_and_has_a_hard_upper_bound(self):
+        self.assertEqual(scores.step_timeout('game_onnx.py', 2), 600)
+        self.assertEqual(scores.step_timeout('game_onnx.py', 187.92489795918368), 1624)
+        self.assertEqual(scores.step_timeout('run_tifa.py', 300), 1800)
+        self.assertEqual(scores.step_timeout('game_onnx.py', 1e308), 1800)
+        self.assertEqual(scores.step_timeout('build_review_score.py', 300), 600)
+        for value in (0, -1, True, float('nan'), float('inf'), '188'):
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, '时长无效'):
+                scores.step_timeout('game_onnx.py', value)
+
+    def test_timeout_keeps_live_chunk_logs_and_same_job_recovers_without_changing_song(self):
+        identifier = str(uuid.uuid4())
+        original_audio = scores.file_sha256(self.audio)
+        original_text = (self.root / 'workflow/runs' / self.identifier / 'state.json').read_bytes()
+        with self.assertRaisesRegex(ValueError, 'game_onnx.py.*600秒'):
+            self.run_job(identifier=identifier, fail_script='game_onnx.py')
+        folder = self.jobs / identifier
+        failed = json.loads((folder / 'state.json').read_text())
+        self.assertEqual(failed['stage'], 'error')
+        self.assertEqual(failed['active_step'], 'game_onnx.py')
+        self.assertEqual(failed['step_timeout_seconds'], 600)
+        self.assertEqual(failed['attempt'], 1)
+        self.assertIn('partial progress', (folder / 'pipeline.log').read_text())
+        self.assertIn('timed out after 600s', (folder / 'pipeline.log').read_text())
+        self.assertNotIn(str(scores.PYTHON), failed['error'])
+        state, _, calls = self.run_job(identifier=identifier)
+        self.assertEqual(state['id'], identifier)
+        self.assertEqual(state['stage'], 'ready')
+        self.assertEqual(state['attempt'], 2)
+        self.assertIsNone(state['error'])
+        self.assertIn('game_onnx.py', calls)
+        preserved = folder / state['previous_analysis_directory']
+        self.assertTrue((preserved / 'alignment-inputs/rain-vocals.txt').is_file())
+        self.assertEqual(scores.file_sha256(self.audio), original_audio)
+        self.assertEqual((self.root / 'workflow/runs' / self.identifier / 'state.json').read_bytes(), original_text)
+        self.assertFalse(scores.Scores().public(state)['accuracy_accepted'])
+        # Repeating an already complete job does not touch its score or analyze again.
+        ready_bytes = (folder / 'state.json').read_bytes()
+        _, _, calls = self.run_job(identifier=identifier)
+        self.assertEqual(calls, [])
+        self.assertEqual((folder / 'state.json').read_bytes(), ready_bytes)
+
+    def test_same_job_worker_lock_blocks_duplicate_recovery_without_overwriting_live_state(self):
+        identifier = str(uuid.uuid4())
+        folder = self.jobs / identifier
+        write_json(folder / 'state.json', {**self.context, 'id': identifier, 'stage': 'transcribing', 'data_dir': str(self.data)})
+        before = (folder / 'state.json').read_bytes()
+        with (folder / '.worker.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with patch.object(scores.subprocess, 'run') as run:
+                with self.assertRaisesRegex(ValueError, '仍在运行'):
+                    scores.work(identifier)
+                run.assert_not_called()
+        self.assertEqual((folder / 'state.json').read_bytes(), before)
+
+    def test_resume_rejects_changed_source_context_before_archiving_previous_analysis(self):
+        identifier = str(uuid.uuid4())
+        with self.assertRaises(ValueError):
+            self.run_job(identifier=identifier, fail_script='game_onnx.py')
+        folder = self.jobs / identifier
+        original_input = (folder / 'analysis/alignment-inputs/rain-vocals.txt').read_bytes()
+        write_json(self.root / 'workflow/runs' / self.identifier / 'state.json', {'lyrics': '不同的歌词'})
+        with patch.object(scores.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, '已改变'):
+                scores.work(identifier)
+            run.assert_not_called()
+        self.assertEqual((folder / 'analysis/alignment-inputs/rain-vocals.txt').read_bytes(), original_input)
+        self.assertEqual(list(folder.glob('analysis-attempt-*')), [])
 
 
 if __name__ == '__main__':

@@ -30,6 +30,11 @@ def file_sha256(path):
   for block in iter(lambda:source.read(1024*1024),b''):digest.update(block)
  return digest.hexdigest()
 
+def step_timeout(script,duration):
+ """Allow bounded CPU analysis time in proportion to the complete song."""
+ if isinstance(duration,bool) or not isinstance(duration,(int,float)) or not math.isfinite(duration) or duration<=0:raise ValueError('歌曲时长无效，无法确定本地出谱时限')
+ return math.ceil(min(1800,max(600,duration*8+120))) if script in ('game_onnx.py','run_tifa.py') else 600
+
 def completed_game_transcription(raw,context,duration):
  """Accept a whole-source GAME result, not a partial or refined score artifact."""
  try:
@@ -200,16 +205,31 @@ class Scores:
 
 def work(identifier):
  manager=Scores();state=manager.read(identifier);directory=JOBS/identifier;file=directory/'state.json'
+ worker_lock=(directory/'.worker.lock').open('a')
+ try:fcntl.flock(worker_lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+ except BlockingIOError:
+  worker_lock.close();raise ValueError('该出谱任务仍在运行，不能同时恢复')
  def stage(name,**kw):state.update(stage=name,**kw);save_json(file,state)
  def run(script,args):
-  result=subprocess.run([str(PYTHON),str(BASE/script),*map(str,args)],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=600)
-  with (directory/'pipeline.log').open('ab') as log:log.write(result.stdout)
+  timeout=step_timeout(script,duration)
+  stage(state['stage'],active_step=script,step_timeout_seconds=timeout,step_started_at=time.time())
+  with (directory/'pipeline.log').open('ab',buffering=0) as log:
+   log.write(f'\n[{script}] attempt={state["attempt"]} timeout={timeout}s\n'.encode())
+   try:
+    result=subprocess.run([str(PYTHON),str(BASE/script),*map(str,args)],stdout=log,stderr=subprocess.STDOUT,timeout=timeout,
+     env={**os.environ,'PYTHONUNBUFFERED':'1','OPENBLAS_NUM_THREADS':'1','OMP_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1',
+          'MUSIC_GAME_CHUNK_SECONDS':os.environ.get('MUSIC_GAME_CHUNK_SECONDS','8')})
+   except subprocess.TimeoutExpired as error:
+    log.write(f'[{script}] timed out after {timeout}s; partial progress retained\n'.encode())
+    raise ValueError(f'出谱步骤 {script} 超过本地处理时限（{timeout}秒）；进度已保存在 pipeline.log，可稍后重试；原歌曲未修改') from error
   if result.returncode:raise ValueError(f'出谱步骤 {script} 未完成，请查看本地日志；原歌曲未修改')
- stage('queued',pid=os.getpid())
  try:
+  if state['stage']=='ready':return
+  stage('queued',pid=os.getpid(),attempt=state.get('attempt',0)+1,error=None,finished_at=None)
   with (JOBS/'.engine.lock').open('a') as lock:
    fcntl.flock(lock,fcntl.LOCK_EX);source=Path(state['data_dir']);context,lyrics=source_context(source)
    if any(state[k]!=v for k,v in context.items()):raise ValueError('原始人声或歌词已改变，请重新生成')
+   duration=float(json.loads((source/'preparation.json').read_text())['duration_seconds']);step_timeout('game_onnx.py',duration)
    vocal_path=source/lead_vocal_source(source)['file']
    if hashlib.sha256(vocal_path.read_bytes()).hexdigest()!=state['vocal_sha256']:raise ValueError('当前人声文件校验失败')
    # Reuse already measured analysis only if BOTH the audio and original text match.
@@ -227,6 +247,11 @@ def work(identifier):
     for name in names:shutil.copy2(cache.parent/name,directory/name)
    else:
     analysis=directory/'analysis'
+    # A failed attempt may contain incomplete model output. Preserve it for
+    # diagnosis, then rebuild the source-bound analysis under the same job ID.
+    if analysis.exists() or analysis.is_symlink():
+     previous=directory/f'analysis-attempt-{state["attempt"]-1}-{uuid.uuid4().hex[:8]}'
+     analysis.rename(previous);stage(state['stage'],previous_analysis_directory=previous.name)
     if state.get('analysis_source_job_id'):
      previous=manager.read(state['analysis_source_job_id'])
      if any(previous.get(k)!=v for k,v in context.items() if k!='corrections_sha256'):raise ValueError('复用分析的来源已改变')
@@ -236,7 +261,6 @@ def work(identifier):
     else:
      analysis.mkdir();inputs=analysis/'alignment-inputs';inputs.mkdir();(inputs/'rain-vocals.wav').symlink_to(vocal_path)
      (inputs/'rain-vocals.txt').write_text('\n'.join(line for line in lyrics.splitlines() if not line.startswith('[')))
-     duration=float(json.loads((source/'preparation.json').read_text())['duration_seconds'])
      transcription=None if state.get('force_recompute') else cached_transcription(context,duration,identifier)
      if transcription:
       shutil.copy2(transcription['path'],analysis/'rain-vocal-notes.json')
@@ -266,6 +290,7 @@ def work(identifier):
    files={name:hashlib.sha256((directory/name).read_bytes()).hexdigest() for name in sorted(allowed)}
    stage('ready',finished_at=time.time(),files=files,summary=score['summary'],reused_analysis=reused)
  except Exception as e:stage('error',error=str(e)[:240],finished_at=time.time());raise
+ finally:worker_lock.close()
 
 if __name__=='__main__':
  parser=argparse.ArgumentParser();parser.add_argument('--run-job',required=True);work(parser.parse_args().run_job)

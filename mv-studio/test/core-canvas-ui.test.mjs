@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
 import {mountReferencePanels} from '../public/reference-panels.js';
 import {mountCanvasSettings} from '../public/canvas-settings-panel.js';
+import {mountAIMVPanel} from '../public/ai-mv-panel.js';
 const canvas=await readFile(new URL('../public/free-canvas-ui.js',import.meta.url),'utf8');
 const studio=await readFile(new URL('../public/studio-ui.js',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -17,6 +18,23 @@ class Element{
 }
 function env(t){const old=globalThis.document;globalThis.document={body:new Element('body'),head:new Element('head'),createElement:tag=>new Element(tag),querySelector:()=>null,activeElement:new Element('focus')};t.after(()=>globalThis.document=old);}
 const button=dataset=>({dataset,disabled:false,closest(){return this;}});
+function canvasEntryFixture(input={}){
+ const controls=[button({studioAction:'empty-canvas'}),button({studioAction:'create'}),button({view:'canvas'})];
+ for(const control of controls){control.setAttribute=()=>{};control.removeAttribute=()=>{};control.classList={contains:()=>false};}
+ const nodes=new Map(),element=id=>{if(!nodes.has(id))nodes.set(id,{value:'MV 想法',hidden:id!=='home-view',attributes:{},setAttribute(name,value){this.attributes[name]=value;},removeAttribute(name){delete this.attributes[name];}});return nodes.get(id);};
+ const state={project:{id:'music-project',source:{id:'song.mp3',duration:30},musicHandoff:{source_kind:'current_mix'},studio:{ratio:'9:16'},...input},activations:[],engineOrigins:[],projectLists:0,notes:[],onActivate:null,listener:null};
+ const context={canvasOpening:null,view:'home',type:'story',prompt:'',closeMini(){},renderDownloads(){},
+  bridge:{read:()=>state.project,busy:()=>false,pause(){},toast:message=>state.notes.push(message),configure:patch=>Object.assign(state.project.studio,patch)},
+  free:{visible(){},async activate(options){state.activations.push(options);if(state.onActivate)await state.onActivate(options);else if(options.blank)state.project={id:'new-canvas',source:{id:'sample'},studio:{canvas:{nodes:[]},freeCanvas:true,ratio:'16:9'}};},openEngine(){state.engineOrigins.push(state.project.id);},async openProjects(){state.projectLists++;}},
+  sync(){controls[1].disabled=!!context.canvasOpening||context.bridge.busy();},$:element,
+  document:{body:{dataset:{}},querySelectorAll:selector=>selector==='[data-view]'?[controls[2]]:controls,addEventListener(type,listener){if(type==='click')state.listener=listener;}},
+  window:{scrollTo(){},history:{replaceState(){}}},location:{pathname:'/mv/',search:'',hash:''}};
+ vm.createContext(context);
+ const begin=studio.indexOf(' function setView('),end=studio.indexOf(' async function uploadFile(',begin);
+ const action=studio.slice(studio.indexOf(' async function action('),studio.indexOf(" document.addEventListener('click'"));
+ vm.runInContext(studio.slice(begin,end)+action,context);
+ return{state,context,controls,element,run:code=>vm.runInContext(code,context)};
+}
 
 test('selecting an image keeps generation/crop/download tools without an empty presets menu',()=>{
  const bar=new Element('toolbar'),node={type:'image',asset:{url:'/files/test.png'}};
@@ -74,4 +92,77 @@ test('audio and movie lifecycle events notify the home play-state UI without rel
  const scope={audio,movie,studio:null};vm.runInNewContext(app.slice(start,end),scope);
  assert.equal(handlers.length,8);for(const handler of handlers)assert.doesNotThrow(()=>handler.fn());assert.equal(changes,0,'startup media events are safe before the studio mounts');
  scope.studio={syncPlayback:()=>changes++};for(const handler of handlers)handler.fn();assert.equal(changes,8);assert.deepEqual([...new Set(handlers.map(h=>h.event))],['play','pause','ended','emptied']);
+});
+
+test('AI MV source labels distinguish mixes, original audio and uploads, including valid copied snapshots',async t=>{
+ env(t);
+ const hash='a'.repeat(64),snapshotId='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa.mp3';
+ const cases=[
+  {source:{id:'mix.mp3',duration:30},musicHandoff:{source_kind:'current_mix'},label:'当前歌曲混音'},
+  {source:{id:'original.mp3',duration:30},musicHandoff:{source_kind:'generated_original'},label:'原歌曲音频'},
+  {source:{id:'upload.mp3',duration:30},label:'上传配乐'},
+  {source:{id:'unknown.mp3',duration:30},musicHandoff:{source_kind:'unknown'},label:'上传配乐'},
+  {source:{id:snapshotId,duration:30},studio:{originMusicSnapshot:{source_kind:'current_mix',audio_sha256:hash}},label:'当前歌曲混音'},
+  {source:{id:'replacement.mp3',duration:30},studio:{originMusicSnapshot:{source_kind:'current_mix',audio_sha256:hash}},label:'上传配乐'},
+ ];
+ for(const input of cases){
+  const p={id:'test',title:'示例歌曲',start:0,...input};
+  const panel=mountAIMVPanel({bridge:{read:()=>p,capabilities:()=>({}),aiMVJobs:async()=>[]}});
+  await panel.open();const dialog=document.body.children.at(-1);
+  assert.equal(dialog.innerHTML.match(/<p class="aimv-source">(.*?)<\/p>/)[1],'示例歌曲 · '+input.label);
+  assert.match(dialog.innerHTML,/保留当前配乐作为音轨/);assert.match(dialog.innerHTML,/再与当前配乐合成/);
+  panel.destroy();
+ }
+});
+
+test('entering the canvas preserves the current song, handoff and selected 9:16 ratio',async()=>{
+ const f=canvasEntryFixture(),original=f.state.project;
+ await f.run("action('empty-canvas')");
+ assert.equal(f.state.project,original);assert.equal(f.state.project.id,'music-project');
+ assert.equal(f.state.project.musicHandoff.source_kind,'current_mix');assert.equal(f.state.project.studio.ratio,'9:16');
+ assert.equal(f.state.activations[0].blank,false);assert.equal(f.context.view,'canvas');
+});
+
+test('enter reuses an existing music-free canvas and creates blank only for a fresh sample project',async()=>{
+ const saved=canvasEntryFixture({source:{id:'sample'},studio:{canvas:{nodes:[]},freeCanvas:true,ratio:'9:16'}});
+ await saved.run("action('empty-canvas')");assert.equal(saved.state.project.id,'music-project');assert.equal(saved.state.activations[0].blank,false);assert.equal(saved.state.project.studio.ratio,'9:16');
+ const fresh=canvasEntryFixture({source:{id:'sample'},musicHandoff:null,studio:{ratio:'16:9'}});
+ await fresh.run("action('empty-canvas')");assert.equal(fresh.state.activations[0].blank,true);assert.equal(fresh.state.project.id,'new-canvas');
+});
+
+test('canvas activation keeps old controls inert and starts storyboard only after the new origin is ready',async()=>{
+ const f=canvasEntryFixture();let finish;const waiting=new Promise(resolve=>finish=resolve);
+ f.state.onActivate=async()=>{f.context.setView('canvas');await waiting;f.state.project={...f.state.project,id:'activated-origin'};};
+ const creating=f.run("action('create')");await tick();
+ assert.equal(f.context.view,'home');assert.equal(f.element('canvas-view').inert,true);assert.equal(f.element('canvas-view').attributes['aria-busy'],'true');
+ assert.ok(f.controls.every(b=>b.disabled));assert.deepEqual(f.state.engineOrigins,[]);
+ finish();await creating;assert.equal(f.context.view,'canvas');assert.equal(f.element('canvas-view').inert,false);assert.deepEqual(f.state.engineOrigins,['activated-origin']);
+});
+
+test('rapid repeated enter requests share one activation and both resolve after completion',async()=>{
+ const f=canvasEntryFixture();let finish;f.state.onActivate=()=>new Promise(resolve=>finish=resolve);
+ const a=f.run('openCanvas(true)'),b=f.run('openCanvas(true)');await tick();assert.equal(f.state.activations.length,1);assert.equal(f.context.view,'home');
+ finish();assert.equal(await a,true);assert.equal(await b,true);assert.ok(f.controls.every(b=>!b.disabled));
+});
+
+test('failed or busy activation cannot open storyboard and failure unlocks a safe retry',async()=>{
+ const f=canvasEntryFixture();f.state.onActivate=async()=>{throw Error('activation failed');};
+ await assert.rejects(f.run("action('create')"),/activation failed/);assert.equal(f.context.view,'home');assert.equal(f.element('canvas-view').inert,false);assert.ok(f.controls.every(b=>!b.disabled));assert.deepEqual(f.state.engineOrigins,[]);
+ f.state.onActivate=null;await f.run("action('create')");assert.deepEqual(f.state.engineOrigins,['music-project']);
+ const busy=canvasEntryFixture();busy.context.bridge.busy=()=>true;await busy.run("action('create')");assert.equal(busy.state.activations.length,0);assert.deepEqual(busy.state.engineOrigins,[]);
+});
+
+test('canvas navigation waits for activation before showing the project picker',async()=>{
+ const f=canvasEntryFixture();let finish;f.state.onActivate=()=>new Promise(resolve=>finish=resolve);
+ const start=studio.indexOf(" document.addEventListener('click'"),end=studio.indexOf(" $('creative-prompt').addEventListener",start);
+ f.run(studio.slice(start,end));const navigating=f.state.listener({target:f.controls[2]});await tick();
+ assert.equal(f.context.view,'home');assert.equal(f.state.projectLists,0);
+ finish();await navigating;assert.equal(f.context.view,'canvas');assert.equal(f.state.projectLists,1);
+});
+
+test('a direct canvas URL waits for activation instead of exposing the previous project',async()=>{
+ const f=canvasEntryFixture();let finish;f.state.onActivate=()=>new Promise(resolve=>finish=resolve);f.context.location.hash='#canvas';
+ f.run(studio.slice(studio.indexOf(' const requested='),studio.indexOf(' window.MV_STUDIO=')));await tick();
+ assert.equal(f.context.view,'home');assert.equal(f.element('canvas-view').inert,true);
+ finish();await tick();assert.equal(f.context.view,'canvas');assert.equal(f.element('canvas-view').inert,false);
 });

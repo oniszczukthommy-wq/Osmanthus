@@ -4,7 +4,7 @@
 
 ## 先运行不调用付费模型的版本
 
-需要 **Node.js 22+** 和可执行的 **FFmpeg / ffprobe**，两者需支持 H.264、AAC。此项目没有第三方 npm 包依赖。
+需要 **Node.js 22+** 和可执行的 **FFmpeg / ffprobe**，两者需支持 H.264、AAC。烧录字幕还需 FFmpeg 的 drawtext/libfreetype 支持和能覆盖字幕文字的本机字体。此项目没有第三方 npm 包依赖。
 
 在本目录运行（macOS / Linux）：
 
@@ -42,6 +42,7 @@ node --env-file=.env server.mjs
 - `DASHSCOPE_API_KEY`、可选 `DASHSCOPE_WORKSPACE_ID`：阿里图像、语音和视频模型。模型名和地域必须与你自己的权限匹配。
 - `MV_VIDEO_BUDGET_CNY`：本地估算预算，不能替代供应商侧的余额、硬限额或真实账单。新生成可能收费。
 - `PORT`、`MV_DATA_DIR`、`FFMPEG_BIN`、`FFPROBE_BIN`：服务端运行设置。
+- `MV_SUBTITLE_FONT`（可选）：指定本机 TTF、OTF 或 TTC 字体文件。默认查找系统中文字体；导出前检查每个字幕字形，缺字时明确提示。Linux 可自行安装 Noto CJK 等字体；字库不随本仓库分发。
 
 当前 AI 一键分镜成片以 5 / 10 秒短链验证；剪辑面板最多组合 8 段、60 秒。全长歌曲 MV 不是已验证的一键能力。
 

@@ -14,13 +14,14 @@ let instrumentStatus=null, instrumentPolling=false;
 let arrangementJob=null,arrangementProject=null,arrangementPolling=false,arrangementStarting=false,arrangementError='',candidateId=null;
 let chatPending=false;
 let candidateReview=null;
+let audioPreparation=null,audioAcceptSerial=0,originalProjectKey=null;
 const pendingSwitches=new Map(),switchWaiters=[];
 let switchSyncing=false,switchSequence=0,switchFailure=null,confirmedMix=null;
 const buffers=new Map(), telemetry={events:[],audioErrors:[]};
 const clock=(n)=>`${String(Math.floor(n/60)).padStart(2,'0')}:${(n%60).toFixed(1).padStart(4,'0')}`;
 const liveTime=()=>playing?Math.min(playUntil,position+audioContext.currentTime-began):position;
 Object.defineProperty(window,'trackEditorState',{get:()=>({project,selection:{track_id:selected,start_seconds:selection[0],end_seconds:selection[1]},
-  audioReady:!busy&&!!original&&project?.tracks.every(t=>buffers.get(t.id)?.key===t.audio_key),isPlaying:playing,currentTime:liveTime(),listenMode:mode,lastExport,telemetry,
+  audioReady:!busy&&hasProjectAudio(),isPlaying:playing,currentTime:liveTime(),listenMode:mode,lastExport,telemetry,
   pendingTrackSwitches:pendingSwitches.size,switchSyncing,arrangementJob})});
 Object.defineProperty(window,'trackEditorBuffers',{get:()=>({tracks:Object.fromEntries(buffers),original})});
 function notice(text,error=false){$('notice').textContent=text;$('notice').className=error?'error':'';}
@@ -30,28 +31,29 @@ async function api(path,body){const response=await fetch(path,body?{method:'POST
 function context(){if(!audioContext){audioContext=new AudioContext({sampleRate:project?.sample_rate||44100});
     outputGain=audioContext.createGain();outputGain.gain.value=playbackVolume;outputGain.connect(audioContext.destination);}return audioContext;}
 async function decode(url){const response=await fetch(url);if(!response.ok)throw Error('音轨载入失败');return context().decodeAudioData(await response.arrayBuffer());}
-function setBusy(value){busy=value;for(const id of ['play','stop','play-selection','apply-gain','mute-selection','restore-selection','send','export-wav','export-mp3'])$(id).disabled=value;
-  $('remove-track').disabled=value||!project||project.tracks.length<=1;
-  $('undo').disabled=value||!project?.can_undo;$('redo').disabled=value||!project?.can_redo;
-  $('add-piano').disabled=value||!project?.piano_available||project?.piano_added;
+function setBusy(value){busy=value;const unavailable=value||!hasProjectAudio();for(const id of ['play','stop','play-selection','apply-gain','mute-selection','restore-selection','send','export-wav','export-mp3'])$(id).disabled=unavailable;
+  $('remove-track').disabled=unavailable||!project||project.tracks.length<=1;
+  $('undo').disabled=unavailable||!project?.can_undo;$('redo').disabled=unavailable||!project?.can_redo;
+  $('add-piano').disabled=unavailable||!project?.piano_available||project?.piano_added;
   $('add-piano').textContent=project?.piano_added?'钢琴估计轨已加入':project?.removed_track_ids?.includes('piano')?'＋ 恢复钢琴估计轨':project?.piano_available?'＋ 加入钢琴分离候选':'钢琴候选待提取';
-  $('add-guitar').disabled=value||!project?.guitar_available||project?.guitar_added;
+  $('add-guitar').disabled=unavailable||!project?.guitar_available||project?.guitar_added;
   $('add-guitar').textContent=project?.guitar_added?'吉他估计轨已加入':project?.removed_track_ids?.includes('guitar')?'＋ 恢复吉他估计轨':project?.guitar_available?'＋ 加入吉他分离候选':'吉他候选待提取';
   paintArrangementUI();
   const stage=instrumentStatus?.projectId===project?.id?instrumentStatus.stage:null;
   const prepared=project?.piano_available&&project?.guitar_available;
-  $('prepare-instruments').disabled=value||prepared||stage==='separating';
+  $('prepare-instruments').disabled=unavailable||prepared||stage==='separating';
   $('prepare-instruments').textContent=prepared?'器乐候选已提取':stage==='separating'?'正在提取器乐候选…':'提取钢琴 / 吉他候选';
   $('instrument-status').textContent=prepared?'钢琴、吉他分离候选已准备。模型固定输出这些声部，并不证明原曲含有这些乐器；尚未可靠确认，请试听核对。':stage==='separating'?'正在本机提取目标乐器的分离候选；此操作不确认原曲是否存在对应乐器。可继续编辑已有轨道。':
     instrumentStatus?.projectId===project?.id&&instrumentStatus.error?instrumentStatus.error:'原曲乐器尚未确认。可提取目标声部候选试听；没有可靠依据时保留其他伴奏，不自动加入乐器轨。';
-  $('piano-cleanup').disabled=value;
-  for(const el of document.querySelectorAll('.track button,.track input'))el.disabled=value;
-  $('send').disabled=value||chatPending;
-  $('ready').textContent=value?'正在处理…':'工程已就绪';}
+  $('piano-cleanup').disabled=unavailable;
+  for(const el of document.querySelectorAll('.track button,.track input'))el.disabled=unavailable;
+  $('send').disabled=unavailable||chatPending;
+  $('ready').textContent=value?'正在处理…':hasProjectAudio()?'工程已就绪':'音轨按需载入';}
 function stop(reset=false){if(playing)position=liveTime();playing=false;
   for(const node of nodes){try{node.source.stop();}catch{}node.source.disconnect();node.gain.disconnect();node.analyser.disconnect();}nodes=[];
   if(reset)position=0;$('play').textContent='播放';event(reset?'stop':'pause');window.syncGenerationTransport?.();}
 async function play(start=position,end=project.duration,shouldPlay=()=>true){
+  await prepareAudio();if(!shouldPlay())return;
   window.pauseCandidatePreview?.();
   window.pauseVoiceLibraryPreview?.();
   window.pauseVocalPreview?.();
@@ -109,7 +111,7 @@ function updateMixHistory(){
   $('project-info').textContent=`工程 ${project.id} · 版本 ${project.revision} · 状态 ${project.fingerprint.slice(0,12)}`;
   $('history').replaceChildren(...project.history.map(h=>{const li=document.createElement('li');li.className=h.applied?'':'pending';li.textContent=`${h.origin==='dialogue'?'对话':'手动'}：${h.label}`;return li;}));
 }
-function toggleTrack(id){if(busy)return;const started=performance.now(),t=project.tracks.find(t=>t.id===id);if(!t)return;
+function toggleTrack(id){if(busy)return;if(!hasProjectAudio()){const identifier=project?.id;void prepareAudio().then(()=>{if(project?.id===identifier)toggleTrack(id);}).catch(e=>notice(e.message,true));return;}const started=performance.now(),t=project.tracks.find(t=>t.id===id);if(!t)return;
   const preview=window.activeGenerationPreview?.();
   if(preview){notice('正在试听的歌曲还在准备分轨，准备完成后即可边听边调整这首歌的声部。');return;}
   if(!switchSyncing&&!pendingSwitches.size)confirmedMix=mixControls();
@@ -266,15 +268,29 @@ function render(){
   $('history').replaceChildren(...project.history.map(h=>{const li=document.createElement('li');li.className=h.applied?'':'pending';li.textContent=`${h.origin==='dialogue'?'对话':'手动'}：${h.label}`;return li;}));
   updateSelection();renderRuler();setBusy(busy);
 }
-async function accept(next){const old=project;
-  const newOriginal=next.id!==old?.id||!original?decode(next.original_audio_url):Promise.resolve(original);
-  const loaded=await Promise.all(next.tracks.map(async t=>{
+function originalKey(value){return value?value.id+'|'+value.original_audio_url:null;}
+function hasProjectAudio(){return !!project&&!!original&&originalProjectKey===originalKey(project)&&project.tracks.every(t=>buffers.get(t.id)?.key===t.audio_key);}
+async function prepareAudio(){
+  if(hasProjectAudio())return project;
+  if(audioPreparation)return audioPreparation;
+  if(!project)throw Error('歌曲工程尚未载入，请刷新后重试。');
+  if(busy)throw Error('当前歌曲正在处理，请稍后重试。');
+  const target=project;setBusy(true);notice('正在载入歌曲音轨，其他创作页面可继续使用。');
+  const task=(async()=>{try{await accept(target);event('audio-ready');return project;}
+    catch(error){notice('音轨载入失败，可再次打开 Studio 或播放以重试：'+error.message,true);throw error;}
+    finally{if(audioPreparation===task){audioPreparation=null;setBusy(false);}}})();
+  audioPreparation=task;return task;
+}
+async function accept(next){const old=project,serial=++audioAcceptSerial;
+  const newOriginal=originalProjectKey!==originalKey(next)||!original?decode(next.original_audio_url):Promise.resolve(original);
+  const loading=Promise.all(next.tracks.map(async t=>{
     if(buffers.get(t.id)?.key===t.audio_key)return [t.id,buffers.get(t.id)];
     return [t.id,{key:t.audio_key,buffer:await decode(t.audio_url)}];}));
   // Publish metadata and playback buffers together, only after every changed
   // track decoded. A failed download must never mix revisions in playback.
-  const decodedOriginal=await newOriginal;
-  for(const [id,item] of loaded)buffers.set(id,item);project=next;original=decodedOriginal;
+  const [decodedOriginal,loaded]=await Promise.all([newOriginal,loading]);
+  if(serial!==audioAcceptSerial)throw Error('歌曲音频载入已被新的工程替换，请重试。');
+  for(const [id,item] of loaded)buffers.set(id,item);project=next;original=decodedOriginal;originalProjectKey=originalKey(next);
   if(old?.id!==next.id){stop(true);selected='bass';mode='mix';$('listen-mode').value=mode;$('messages').replaceChildren();
     arrangementJob=null;arrangementProject=null;arrangementError='';candidateId=null;
     $('start').value=next.duration>45?30:0;$('end').value=Math.min(45,next.duration);}
@@ -284,6 +300,7 @@ async function accept(next){const old=project;
   render();
 }
 async function mutate(path,body={},success='已更新工程',{preservePlayback=false}={}){
+  if(!hasProjectAudio()){try{await prepareAudio();}catch{return;}}
   if(busy||!await settleTrackSwitches()||busy)return;const resume=preservePlayback&&playing,from=liveTime(),until=playUntil;
   const liveGains=resume&&mode==='mix'&&nodes.every(n=>project.tracks.some(t=>t.id===n.id));
   const previousKeys=new Map(project.tracks.map(t=>[t.id,t.audio_key]));
@@ -386,48 +403,52 @@ async function activateProject(identifier,{preservePreview=false}={}){if(busy)th
   if(!preservePreview)window.pauseGenerationPreview?.();stop();setBusy(true);
   try{const result=await api('/api/projects/activate',{target_id:identifier,project_id:project.id,revision:project.revision});await accept(result.project);notice('当前歌曲工程已切换。');}
   catch(e){if(e.message.includes('工程'))await accept(await api('/api/project'));throw e;}finally{setBusy(false);}}
-try{project=await api('/api/project');await accept(project);
-  setBusy(false);notice('工程已就绪。先试听，再用对话或手动控件修改同一段。');event('ready');}
-catch(e){notice(e.message,true);$('ready').textContent='载入失败';}
+async function loadInitialProject(){
+  try{project=await api('/api/project');
+    if(window.osmanthusIntegrated){render();setBusy(false);notice('选择歌曲开始创作；进入 Studio 或播放混音时载入音轨。');event('metadata-ready');}
+    else{await accept(project);setBusy(false);notice('工程已就绪。先试听，再用对话或手动控件修改同一段。');event('ready');}
+  }catch(error){notice(error.message,true);$('ready').textContent='载入失败';}
+}
+await loadInitialProject();
 const sharedTransport={
   unlock:()=>context().resume(),
   state:()=>({projectId:project?.id,playing,currentTime:Math.max(0,liveTime()),duration:project?.duration||0,volume:playbackVolume,
-    ready:!busy&&!!original&&project?.tracks.every(t=>buffers.get(t.id)?.key===t.audio_key)}),
+    ready:!busy&&hasProjectAudio()}),
   async play(identifier,at,shouldPlay=()=>true){if(identifier!==project.id)await activateProject(identifier);
-    if(!shouldPlay())return;
+    if(!shouldPlay())return;await prepareAudio();if(!shouldPlay())return;
     if(busy)throw Error('正在载入歌曲音轨，请稍后播放');
     mode='mix';$('listen-mode').value=mode;await play(at??(position>=project.duration?0:position),project.duration,shouldPlay);
     if(playing&&$('notice').textContent.includes('还在准备分轨'))notice('歌曲分轨已就绪，播放时可随时开关声部。');},
   pause:()=>stop(),
   async seek(identifier,at){if(identifier!==project.id)await activateProject(identifier);
-    if(busy)throw Error('歌曲音轨正在载入');
+    await prepareAudio();if(busy)throw Error('歌曲音轨正在载入');
     const resume=playing;stop();position=Math.max(0,Math.min(project.duration,at));
     if(resume&&position<project.duration)await play();},
   volume(value){playbackVolume=Math.max(0,Math.min(1,Number(value)));if(outputGain)outputGain.gain.setTargetAtTime(playbackVolume,audioContext.currentTime,.005);}
 };
-if(project&&original)candidateReview=initializeCandidateReview({getProject:()=>project,getSelection:()=>selection,transport:sharedTransport,settle:settleTrackSwitches,
+if(project)candidateReview=initializeCandidateReview({getProject:()=>project,getSelection:()=>selection,transport:sharedTransport,settle:settleTrackSwitches,
   container:document.getElementById('studio-candidate-mount'),
   apply:async review=>{const result=await mutate(`/api/candidate-reviews/${review.id}/apply`,{},'已应用试听候选，可撤销恢复。');
     if(!result)throw Error('候选尚未应用，请检查工程提示');
     if(review.kind==='vocal'){await window.refreshVocalScore?.();await window.refreshVoiceConversion?.();}
     return result;}});
-if(project&&original)initializeSections({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches,mount:document.getElementById('studio-navigation-mount'),
+if(project)initializeSections({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches,mount:document.getElementById('studio-navigation-mount'),
   onSelectRange:range=>{$('start').value=range.start_seconds;$('end').value=range.end_seconds;updateSelection();}});
-if(project&&original)initializeScore({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches});
-if(project&&original&&!window.osmanthusIntegrated)initializeGeneration({getProject:()=>project,activate:activateProject,stopEditor:()=>{window.pauseScorePreview?.();window.pauseVocalPreview?.();window.pauseVoiceLibraryPreview?.();stop();},transport:sharedTransport});
-if(project&&original)initializeVoiceLibrary({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches});
-if(project&&original)initializeLyrics({getProject:()=>project,transport:sharedTransport});
-if(project&&original)initializeConversions({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches,
+if(project)initializeScore({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches});
+if(project&&!window.osmanthusIntegrated)initializeGeneration({getProject:()=>project,activate:activateProject,stopEditor:()=>{window.pauseScorePreview?.();window.pauseVocalPreview?.();window.pauseVoiceLibraryPreview?.();stop();},transport:sharedTransport});
+if(project)initializeVoiceLibrary({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches});
+if(project)initializeLyrics({getProject:()=>project,transport:sharedTransport});
+if(project)initializeConversions({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches,
   review:async variant=>candidateReview.open({kind:'vocal',candidate_id:variant}),
   apply:async variant=>{if(variant!=='original')return candidateReview.open({kind:'vocal',candidate_id:variant});
     const result=await mutate('/api/edit',{command:{type:'vocal_variant',track_id:'vocals',variant_id:variant}},'主唱已恢复，所有轨道修改已保留。',{preservePlayback:true});if(!result)throw Error('主唱切换未完成，请查看工程提示后重试');}});
-if(project&&original&&!document.getElementById('experimental-vocals').hidden)initializeVocals({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches,
+if(project&&!document.getElementById('experimental-vocals').hidden)initializeVocals({getProject:()=>project,transport:sharedTransport,settle:settleTrackSwitches,
   apply:async variant=>{if(variant!=='original')return candidateReview.open({kind:'vocal',candidate_id:variant});
     window.pauseScorePreview?.();await mutate('/api/edit',{command:{type:'vocal_variant',track_id:'vocals',variant_id:variant}},'主唱已恢复，试听开关与片段修改已保留。',{preservePlayback:true});await window.refreshVocalScore?.();}});
 document.addEventListener('play',event=>{if(event.target?.id!=='candidate-review-audio')window.pauseCandidatePreview?.();},true);
 if(window.osmanthusIntegrated)window.osmanthusEngine={
-  api,transport:sharedTransport,activate:activateProject,accept,mutate,settle:settleTrackSwitches,
-  getProject:()=>project,ready:()=>!busy&&!!project,
+  api,transport:sharedTransport,activate:activateProject,accept,mutate,settle:settleTrackSwitches,prepareAudio,canPrepareAudio:()=>!busy&&!!project,
+  getProject:()=>project,ready:()=>!busy&&hasProjectAudio(),
   setSelection(track,start,end){if(track)$('track-select').value=track;$('start').value=start;$('end').value=end;updateSelection();},
   playRange:(start,end)=>play(start,end),pause:()=>stop(),toggleTrack,
   attachSeekHandle,drawWave,exportSong,

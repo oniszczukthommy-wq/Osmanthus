@@ -29,15 +29,15 @@ export function initializeConversions({getProject,transport,settle,apply,review}
     }catch(e){if(getProject()?.id===id){error=e.message;paint();nextPoll=performance.now()+5000;}}finally{loading=false;}
   }
   $('svc-create').onclick=async()=>{if(starting||running())return;starting=true;error='';paint();const id=getProject()?.id;
-    try{if(!await settle()||getProject()?.id!==id)return;const p=getProject();job=await request('/api/svc/jobs',{request_id:crypto.randomUUID(),project_id:p.id,revision:p.revision,voice_id:'226869000163476'});nextPoll=0;}
+    try{if(!await settle()||getProject()?.id!==id)return;const p=getProject();const created=await request('/api/svc/jobs',{request_id:crypto.randomUUID(),project_id:p.id,revision:p.revision,voice_id:'226869000163476'});if(getProject()?.id!==id)return;job=created;nextPoll=0;}
     catch(e){if(getProject()?.id===id)error=e.message;}finally{starting=false;paint();}};
-  async function switchTo(variant){if(applying)return;applying=true;pause();error='';paint();try{
-      await apply(variant);await window.refreshVocalScore?.();nextPoll=0;
-    }catch(e){error=e.message;}finally{applying=false;paint();}}
+  async function switchTo(variant){if(applying)return;const id=getProject()?.id;applying=true;pause();error='';paint();try{
+      await apply(variant);if(getProject()?.id!==id)return;await window.refreshVocalScore?.();nextPoll=0;
+    }catch(e){if(getProject()?.id===id)error=e.message;}finally{applying=false;paint();}}
   $('svc-apply').onclick=()=>{if(selected)switchTo(selected);};$('svc-restore').onclick=()=>switchTo('original');
   $('svc-candidate').onchange=async event=>{pause();window.pauseCandidatePreview?.();audio.removeAttribute('src');selected=event.target.value;const candidate=candidates.find(c=>c.id===selected),id=getProject()?.id;
-    if(candidate)try{const next=await request('/api/svc/jobs/'+candidate.job_id);if(getProject()?.id===id&&selected===candidate.id){job=next;paint();}}catch(e){error=e.message;paint();}};
-  $('svc-preview').onclick=async()=>{if(job?.stage!=='ready')return;if(review&&selected){try{await review(selected);}catch(e){error=e.message;paint();}return;}pause();const token=previewSerial,id=getProject()?.id,url=job.files[$('svc-preview-kind').value];
+    if(candidate)try{const next=await request('/api/svc/jobs/'+candidate.job_id);if(getProject()?.id===id&&selected===candidate.id){job=next;paint();}}catch(e){if(getProject()?.id===id&&selected===candidate.id){error=e.message;paint();}}};
+  $('svc-preview').onclick=async()=>{if(job?.stage!=='ready')return;if(review&&selected){const id=getProject()?.id,choice=selected;try{await review(choice);}catch(e){if(getProject()?.id===id&&selected===choice){error=e.message;paint();}}return;}pause();const token=previewSerial,id=getProject()?.id,url=job.files[$('svc-preview-kind').value];
     try{if(audio.getAttribute('src')!==url){audio.src=url;audio.load();}if(token!==previewSerial||getProject()?.id!==id)return;await audio.play();}
     catch(e){if(token===previewSerial&&e.name!=='AbortError'){error=e.message;paint();}}};
   $('svc-preview-kind').onchange=()=>{pause();audio.removeAttribute('src');};

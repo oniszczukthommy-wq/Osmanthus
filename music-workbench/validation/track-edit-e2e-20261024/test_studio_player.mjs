@@ -46,6 +46,20 @@ await test('superseded source failure does not fail the newer user intent',async
 await test('unsettled mixer refuses switching songs',async()=>{
  const f=fixture(),queue=createPlaybackQueue(f.engine);f.engine.settle=async()=>false;await assert.rejects(queue.playSong('one'),/轨道修改/);assert.equal(f.state.projectId,'original');assert.equal(f.log.filter(x=>x[0]==='play').length,0);queue.destroy();
 });
+await test('metadata-only project can prepare audio on first play before playback starts',async()=>{
+ const f=fixture(),prepared=deferred();let preparing=false,loaded=false;
+ f.engine.ready=()=>loaded;f.engine.canPrepareAudio=()=>!loaded;
+ f.engine.transport.play=async(id,at,allowed)=>{preparing=true;await prepared.promise;loaded=true;if(!allowed())return;f.state.playing=true;f.log.push(['play',id]);};
+ const queue=createPlaybackQueue(f.engine),request=queue.playSong('original');await turn();
+ assert.equal(preparing,true);assert.equal(queue.working,true);assert.equal(f.state.playing,false);assert.equal(f.log.some(x=>x[0]==='activate'),false);
+ prepared.resolve();assert.equal((await request).played,true);assert.equal(f.state.playing,true);queue.destroy();
+});
+await test('busy engine cannot use lazy preparation to bypass the audio-update guard',async()=>{
+ const f=fixture();f.engine.ready=()=>false;f.engine.canPrepareAudio=()=>false;
+ const queue=createPlaybackQueue(f.engine);await assert.rejects(queue.playSong('one'),/音轨正在更新/);
+ assert.equal(f.state.playing,false);assert.equal(f.state.projectId,'original');assert.equal(f.log.some(x=>['activate','play'].includes(x[0])),false);queue.destroy();
+});
+
 await test('Space remains available for modal controls and does not start background playback',async()=>{
  const event={code:'Space',target:{closest:()=>null}};
  assert.equal(isPlaybackSpace(event),true);assert.equal(isPlaybackSpace(event,{modalOpen:true}),false);

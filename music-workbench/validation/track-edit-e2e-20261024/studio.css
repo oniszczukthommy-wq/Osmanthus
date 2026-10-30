@@ -132,3 +132,9 @@ html,body{margin:0;min-height:100%;background:#000}#os-mix-28{--studio-sidebar-w
 #os-mix-28 #studio-lyric-approval>.studio-candidate-actions>button{font-size:13px;padding:10px 16px}
 #os-mix-28 #studio-lyric-approval #studio-confirm-lyrics{background:#f4f3ef;color:#141414}
 @media(hover:none){#os-mix-28 .studio-candidate-actions>.studio-candidate-play,#os-mix-28 .studio-row-play{opacity:1}}
+
+/* Keep audition controls clear of the sticky header, composer and player. */
+#os-mix-28 main[data-studio-editor]{scroll-padding-top:80px;scroll-padding-bottom:240px}
+#os-mix-28 main[data-studio-editor]:has(#candidate-review-panel:not([hidden])){padding-bottom:24px;scroll-padding-bottom:24px}
+#os-mix-28 .ux-work:has(#candidate-review-panel:not([hidden])) .studio-ask-shell{position:static;inset:auto;transform:none;margin:20px auto 0;width:min(650px,calc(100% - 28px));max-height:none;overflow:visible}
+@media(max-width:650px){#os-mix-28 main[data-studio-editor]{scroll-padding-top:140px}}

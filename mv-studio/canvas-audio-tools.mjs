@@ -90,11 +90,22 @@ export function createCanvasAudioTools({data,ffmpeg,probe,resolveAsset,python=pr
  function verifyAudio(job){try{const file=path.join(assertDirectory(job.id),'audio.wav'),stat=fs.lstatSync(file);if(!stat.isFile()||stat.isSymbolicLink()||fileHash(file)!==job.audio.sha256)throw Error();}catch{throw problem('已提取音频文件缺失或指纹校验失败',409);}}
  function get(id){const job=read(id);if(!job)return null;if(job.status==='ready')verifyAudio(job);return publicJob(job);}
  function list(projectId){if(projectId!==undefined&&!UUID.test(projectId||''))throw problem('工程标识无效');assertRoot();return fs.readdirSync(root).filter(name=>UUID.test(name)).map(read).filter(job=>job&&(!projectId||job.project_id===projectId)).sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).map(job=>publicJob(job));}
+ async function probeMedia(file,invalidMessage,invalidStatus=400){
+  // Metadata inspection is read-only: retry once only for explicit process/OS
+  // interruptions, never for a decoder rejecting a genuinely invalid file.
+  for(let attempt=0;attempt<2;attempt++)try{return await probe(file);}catch(cause){
+   const transient=['ETIMEDOUT','EAGAIN','EMFILE','ENFILE','ENOMEM'].includes(cause?.code)||['SIGKILL','SIGTERM'].includes(cause?.signal);
+   if(transient&&attempt===0){await new Promise(resolve=>setTimeout(resolve,150));continue;}
+   if(transient)throw Object.assign(problem('本地媒体检查超时或资源繁忙，请稍后重试；原素材未改动',503),{code:'MEDIA_PROBE_BUSY'});
+   if(['ENOENT','EACCES','ENOEXEC'].includes(cause?.code))throw Object.assign(problem('本地媒体检查工具不可用，请检查 FFprobe 配置',503),{code:'MEDIA_PROBE_UNAVAILABLE'});
+   throw Object.assign(problem(invalidMessage,invalidStatus),{code:'MEDIA_PROBE_INVALID'});
+  }
+ }
  async function resolveInput(input){
   let resolved;try{resolved=await resolveAsset(input.asset_id);}catch{throw problem('找不到当前工程可使用的本地素材',404);}const file=resolved?.file;
   if(typeof file!=='string'||!path.isAbsolute(file)||!EXTENSIONS.has(path.extname(file).toLowerCase()))throw problem('素材解析器未返回受支持的本地音频或视频');
   let stat;try{stat=fs.lstatSync(file);}catch{throw problem('本地素材文件不存在',404);}if(!stat.isFile()||stat.isSymbolicLink()||stat.size<1||stat.size>CANVAS_AUDIO_LIMITS.assetBytes)throw problem('音频素材需为本机普通文件，且不能超过16MB',413);
-  let info;try{info=await probe(file);}catch{throw problem('本地素材无法读取，请使用有效音频或视频');}const audio=info?.streams?.find(stream=>stream.codec_type==='audio'),duration=mediaDuration(info,audio);if(!audio||!duration)throw problem('所选素材没有可用音轨');
+  const info=await probeMedia(file,'本地素材无法读取，请使用有效音频或视频');const audio=info?.streams?.find(stream=>stream.codec_type==='audio'),duration=mediaDuration(info,audio);if(!audio||!duration)throw problem('所选素材没有可用音轨');
   const end=input.end??duration,selected=Number((end-input.start).toFixed(6));if(selected<CANVAS_AUDIO_LIMITS.minSeconds-.000001||selected>CANVAS_AUDIO_LIMITS.seconds+.000001)throw problem('音频选段需为0.2至60秒；长素材请先选择起止时间');if(input.start>=duration||end>duration+.05)throw problem('音频选段超出原素材时长');
   return{file,source:{sha256:fileHash(file),bytes:stat.size,duration},selection:{start:input.start,end,duration:selected}};
  }
@@ -116,7 +127,7 @@ export function createCanvasAudioTools({data,ffmpeg,probe,resolveAsset,python=pr
    const frozen=path.join(dir,'source'+path.extname(resolved.file).toLowerCase());fs.copyFileSync(resolved.file,frozen,fs.constants.COPYFILE_EXCL);if(fs.statSync(frozen).size!==job.source.bytes||fileHash(frozen)!==job.source.sha256)throw problem('素材在准备期间发生变化，已停止处理',409);
    job.status='extracting';job.message='正在提取所选音轨';job.updatedAt=new Date().toISOString();save(job);
    const target=path.join(dir,'audio.wav');await execute(ffmpeg,['-nostdin','-v','error','-y','-threads','1','-protocol_whitelist','file,pipe','-ss',String(job.selection.start),'-t',String(job.selection.duration),'-i',frozen,'-map','0:a:0','-vn','-ar','16000','-ac','1','-c:a','pcm_s16le','-t',String(job.selection.duration),target],dir,'本地音频编码器',60000);
-   let info;try{info=await probe(target);}catch{throw problem('提取音频无法读取',500);}const audio=info?.streams?.find(stream=>stream.codec_type==='audio'),duration=mediaDuration(info,audio);
+   const info=await probeMedia(target,'提取音频无法读取',500);const audio=info?.streams?.find(stream=>stream.codec_type==='audio'),duration=mediaDuration(info,audio);
    if(!audio||audio.codec_name!=='pcm_s16le'||Number(audio.sample_rate)!==16000||audio.channels!==1||duration<CANVAS_AUDIO_LIMITS.minSeconds-.01||Math.abs(duration-job.selection.duration)>.1)throw problem('提取音轨的格式或时长校验失败',500);
    job.audio={url:`/files/canvas-audio/${job.id}/audio.wav`,sha256:fileHash(target),duration,codec:'pcm_s16le',sampleRate:16000,channels:1,bits:16};
    if(job.input.mode==='transcribe')job.transcript=await transcribeAudio(job,dir);

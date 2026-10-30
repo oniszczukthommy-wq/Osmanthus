@@ -22,7 +22,7 @@ export function createPlaybackQueue(engine,{onChange=()=>{}}={}){
    try{
     await engine.transport.unlock?.();
     if(op.token!==serial){op.resolve({superseded:true});continue;}
-    if(!engine.ready())throw Error('歌曲音轨正在更新，请稍后播放。');
+    if(!engine.ready()&&!engine.canPrepareAudio?.())throw Error('歌曲音轨正在更新，请稍后播放。');
     if(!await engine.settle())throw Error('请先完成当前轨道修改。');
     if(op.token!==serial){op.resolve({superseded:true});continue;}
     if(engine.getProject()?.id!==op.id)await engine.activate(op.id);

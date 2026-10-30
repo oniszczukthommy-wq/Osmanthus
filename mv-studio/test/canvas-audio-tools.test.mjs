@@ -84,3 +84,17 @@ test('现有Whisper base离线模型真实转写command.wav一次，返回实际
  assert.equal(caps.pythonPresent,true);assert.equal(caps.modulePresent,true);assert.equal(caps.modelPresent,true);assert.equal(caps.engine,CANVAS_ASR_ENGINE);assert.equal(caps.localOnly,true);const original=hash(file),job=await tools.transcribe({request_id:crypto.randomUUID(),project_id:'30000000-0000-4000-8000-000000000002',asset_id:'command',language:'auto'});
  assert.equal(job.status,'ready',job.error);assert(job.text.trim().length>0);assert(job.segments.length>0);assert.equal(job.review_required,true);assert.equal(job.engine,CANVAS_ASR_ENGINE);for(const segment of job.segments){assert(Number.isFinite(segment.start)&&Number.isFinite(segment.end));assert(segment.start>=0&&segment.end>segment.start&&segment.end<=job.audio.duration);assert(segment.text.trim());}assert.equal(hash(file),original);assert.equal(tools.get(job.id).text,job.text);
 });
+
+test('已登记MV的只读媒体检查短暂超时可恢复，输入和输出检查各只重试一次',async t=>{
+ const f=fixture(t),mv='mv:30000000-0000-4000-8000-000000000003',original=hash(f.files.video);f.assets.set(mv,{file:f.files.video});let inputChecks=0,outputChecks=0;
+ const tools=createCanvasAudioTools({...f.config,probe:file=>{if(file===f.files.video&&++inputChecks===1)throw Object.assign(Error('temporary metadata timeout'),{code:'ETIMEDOUT'});if(path.basename(file)==='audio.wav'&&++outputChecks===1)throw Object.assign(Error('temporary process pressure'),{code:'EAGAIN'});return probe(file);}});
+ const job=await tools.extract(f.request({asset_id:mv}));assert.equal(job.status,'ready',job.error);assert.equal(inputChecks,2);assert.equal(outputChecks,2);assert.equal(job.source_sha256,original);assert.equal(hash(f.files.video),original);assert.equal(probe(output(f,job)).streams[0].codec_name,'pcm_s16le');
+});
+
+test('持续进程故障、检查工具缺失与无效文件明确区分，拒绝后不登记任务或运行ASR',async t=>{
+ const f=fixture(t);let calls=0;
+ const make=cause=>createCanvasAudioTools({...f.config,probe:()=>{calls++;throw cause;}});
+ await assert.rejects(()=>make(Object.assign(Error('timeout'),{code:'ETIMEDOUT'})).extract(f.request()),e=>e.status===503&&e.code==='MEDIA_PROBE_BUSY'&&/超时或资源繁忙/.test(e.message));assert.equal(calls,2);
+ calls=0;await assert.rejects(()=>make(Object.assign(Error('missing binary'),{code:'ENOENT'})).extract(f.request()),e=>e.status===503&&e.code==='MEDIA_PROBE_UNAVAILABLE');assert.equal(calls,1);
+ calls=0;await assert.rejects(()=>make(Object.assign(Error('invalid media'),{status:1})).extract(f.request()),e=>e.status===400&&e.code==='MEDIA_PROBE_INVALID'&&/有效音频或视频/.test(e.message));assert.equal(calls,1);assert.deepEqual(fs.readdirSync(path.join(f.data,'canvas-audio')),[]);
+});
