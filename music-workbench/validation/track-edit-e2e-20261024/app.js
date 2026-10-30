@@ -1,3 +1,4 @@
+import {initializeSeekControl} from './seek-control.js';
 import { initializeGeneration } from './generation.js';
 import { initializeLyrics } from './lyrics.js';
 import { initializeScore } from './score.js';
@@ -351,7 +352,7 @@ for(const id of ['start','end','track-select'])$(id).oninput=()=>{if(project){up
 $('undo').onclick=()=>mutate('/api/undo',{},'已撤销；音轨已恢复至上一步。',{preservePlayback:true});$('redo').onclick=()=>mutate('/api/redo',{},'已重做。',{preservePlayback:true});
 $('play').onclick=async()=>{try{if(playing)stop();else await play(position>=project.duration?0:position);}catch(e){telemetry.audioErrors.push(e.message);notice(e.message,true);}};
 $('stop').onclick=()=>stop(true);$('play-selection').onclick=async()=>{try{if(!(selection[0]<selection[1]))throw Error('请选择有效区间');await play(...selection);}catch(e){notice(e.message,true);}};
-$('seek').oninput=e=>{const wasPlaying=playing;stop();position=Number(e.target.value);if(wasPlaying)play().catch(e=>notice(e.message,true));};
+const editorSeek=initializeSeekControl({input:$('seek'),getProject:()=>project,getTime:liveTime,getEnd:()=>playUntil,isPlaying:()=>playing,canSeek:()=>!busy&&hasProjectAudio(),pause:()=>stop(),setTime:at=>{position=at;},resume:play,onError:e=>notice(e.message,true),onSeek:at=>window.dispatchEvent(new CustomEvent('osmanthus:user-seek',{detail:{project_id:project.id,time:at,duration:project.duration}}))});
 $('listen-mode').onchange=e=>{const wasPlaying=playing;stop();mode=e.target.value;if(wasPlaying)play().catch(e=>notice(e.message,true));};
 function appendMessage(text,type){const div=document.createElement('div');div.className='message '+type;div.textContent=text;$('messages').append(div);}
 $('chat-form').onsubmit=async e=>{e.preventDefault();const message=$('prompt').value.trim();if(!message||busy||chatPending)return;
@@ -391,7 +392,7 @@ async function exportSong(format){if(busy||!await settleTrackSwitches()||busy)re
   catch(e){notice(e.message,true);}finally{setBusy(false);}}
 $('export-wav').onclick=()=>exportSong('wav');$('export-mp3').onclick=()=>exportSong('mp3');
 function animate(){const now=liveTime();$('clock').textContent=`${clock(Math.max(0,now))} / ${clock(project?.duration||0)}`;
-  if(project){$('seek').value=Math.max(0,now);for(const el of document.querySelectorAll('.playhead')){el.style.left=`${now/project.duration*100}%`;el.setAttribute('aria-valuenow',Math.max(0,now).toFixed(2));}}
+  if(project){if(!editorSeek.dragging)$('seek').value=Math.max(0,now);for(const el of document.querySelectorAll('.playhead')){el.style.left=`${now/project.duration*100}%`;el.setAttribute('aria-valuenow',Math.max(0,now).toFixed(2));}}
   if(playing&&now>=playUntil){position=playUntil;stop();event('ended');}requestAnimationFrame(animate);}
 new ResizeObserver(()=>{if(project){renderRuler();for(const t of project.tracks){const canvas=document.querySelector(`.track[data-id="${t.id}"] canvas`);if(canvas)drawWave(canvas,t);}}}).observe($('tracks'));
 async function activateProject(identifier,{preservePreview=false}={}){if(busy)throw Error('请先等待当前音频操作完成');

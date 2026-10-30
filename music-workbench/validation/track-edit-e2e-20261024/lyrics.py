@@ -61,6 +61,14 @@ def characters_from_grid(path):
     return [{'char':ch,'start':item.minTime,'end':item.maxTime}
             for item in tier if item.mark for ch in item.mark if ch.isalnum()]
 
+def generated_context(job,audio):
+    if not valid_id(job.get('id')) or job.get('instrumental'):raise ValueError('纯音乐无需加载演唱歌词')
+    lyrics=job.get('lyrics','')
+    if not isinstance(lyrics,str) or not lyric_lines(lyrics) or not audio.is_file():raise ValueError('完整歌曲与歌词尚未准备好')
+    return {'project_id':job['id'],'source_sha256':hashlib.sha256(audio.read_bytes()).hexdigest(),
+            'vocal_sha256':None,'lyrics_sha256':hashlib.sha256(lyrics.encode()).hexdigest(),
+            'basis':'generated_song_mix','engine':ENGINE},lyrics
+
 class Lyrics:
     def __init__(self):
         JOBS.mkdir(exist_ok=True);self.lock=threading.Lock();self.children=[]
@@ -95,6 +103,24 @@ class Lyrics:
         values=[s for s in values if all(s.get(k)==v for k,v in context.items())]
         return {'job':self.public(max(values,key=lambda s:s['created_at'])) if values else None,'lyrics':lyrics,**context}
 
+    def latest_generated(self,job,audio):
+        context,lyrics=generated_context(job,audio)
+        values=[json.loads(p.read_text()) for p in JOBS.glob('*/state.json')]
+        values=[state for state in values if all(state.get(k)==v for k,v in context.items())]
+        return {'job':self.public(max(values,key=lambda state:state['created_at'])) if values else None,'lyrics':lyrics,**context}
+
+    def start_generated(self,job,audio):
+        with self.lock:
+            current=self.latest_generated(job,audio)
+            if current['job'] and current['job']['stage'] not in ('error','interrupted'):return current['job']
+            context,lyrics=generated_context(job,audio);identifier=str(uuid.uuid4())
+            state={**context,'lyrics':lyrics,'id':identifier,'audio_file':str(audio.resolve()),'stage':'queued','created_at':time.time()}
+            folder=JOBS/identifier;folder.mkdir();save_json(folder/'state.json',state)
+            with (folder/'worker.log').open('a') as log:
+                try:self.children.append(subprocess.Popen([str(PYTHON),str(ROOT/'lyrics.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,env={**os.environ,'OMP_NUM_THREADS':'1','OPENBLAS_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1'}))
+                except OSError:state.update(stage='error',error='无法启动歌词同步任务');save_json(folder/'state.json',state)
+            return self.public(state)
+
     def start(self,directory):
         with self.lock:
             current=self.latest(directory)
@@ -112,7 +138,9 @@ class Lyrics:
             return self.public(state)
 
 def work(identifier):
-    manager=Lyrics();state=manager.read(identifier);folder=JOBS/identifier;directory=Path(state['data_dir'])
+    manager=Lyrics();state=manager.read(identifier);folder=JOBS/identifier
+    if state.get('basis')=='generated_song_mix':return work_generated(state)
+    directory=Path(state['data_dir'])
     def stage(name,**values):
         state.update(stage=name,**values);save_json(folder/'state.json',state)
     stage('queued',pid=os.getpid())
@@ -151,6 +179,36 @@ def work(identifier):
             timing={'lines':lines,'duration':meta['duration_seconds'],'method':'actual_vocal_forced_alignment','reused_score_alignment':reused}
             if state.get('timing_review_score_job_id'):timing.update(timing_review_score_job_id=state['timing_review_score_job_id'],timing_review_score_sha256=state['timing_review_score_sha256'],method='phrase_reviewed_actual_vocal_forced_alignment')
             save_json(folder/'timing.json',timing)
+            stage('ready',timing_sha256=hashlib.sha256((folder/'timing.json').read_bytes()).hexdigest(),finished_at=time.time())
+    except Exception as exc:stage('error',error=str(exc)[:200],finished_at=time.time())
+
+def work_generated(state):
+    """Align completed candidate audio directly; no stem preparation or invented timing."""
+    import soundfile as sf
+    folder=JOBS/state['id']
+    def stage(name,**values):state.update(stage=name,**values);save_json(folder/'state.json',state)
+    stage('queued',pid=os.getpid())
+    try:
+        (ROOT/'score-jobs').mkdir(exist_ok=True)
+        with (ROOT/'score-jobs/.engine.lock').open('a') as lock:
+            fcntl.flock(lock,fcntl.LOCK_EX)
+            audio=Path(state['audio_file']);job={'id':state['project_id'],'lyrics':state['lyrics']}
+            expected,_=generated_context(job,audio)
+            if any(state.get(k)!=v for k,v in expected.items()):raise ValueError('歌曲或歌词已改变，请重新同步')
+            inputs=folder/'input';inputs.mkdir(exist_ok=True);target=inputs/'vocal.wav'
+            ffmpeg=ROOT.parent/'audiocraft/conda-env/bin/ffmpeg'
+            result=subprocess.run([str(ffmpeg),'-v','error','-i',str(audio),'-ac','1','-ar','16000','-y',str(target)],capture_output=True,timeout=60)
+            if result.returncode:raise ValueError('歌曲音频暂未读取完成，可重试歌词同步')
+            info=sf.info(target);duration=info.frames/info.samplerate
+            (inputs/'vocal.txt').write_text('\n'.join(lyric_lines(state['lyrics'])))
+            stage('aligning')
+            with (folder/'alignment.log').open('a') as log:
+                result=subprocess.run([str(PYTHON),str(BASE/'run_tifa.py'),str(target),'--output-dir',str(folder/'alignment'),'--threads','1'],stdout=log,stderr=log,timeout=600)
+            if result.returncode:raise ValueError('歌曲歌词同步未完成，可重试；试听不受影响')
+            lines=timed_lines(state['lyrics'],characters_from_grid(folder/'alignment/vocal.TextGrid'),duration)
+            final,_=generated_context(job,audio)
+            if expected!=final:raise ValueError('歌曲已改变，未使用旧的歌词时间')
+            save_json(folder/'timing.json',{'lines':lines,'duration':duration,'method':'actual_song_mix_forced_alignment','reused_score_alignment':False})
             stage('ready',timing_sha256=hashlib.sha256((folder/'timing.json').read_bytes()).hexdigest(),finished_at=time.time())
     except Exception as exc:stage('error',error=str(exc)[:200],finished_at=time.time())
 

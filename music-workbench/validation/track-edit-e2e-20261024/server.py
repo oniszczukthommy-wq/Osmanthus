@@ -23,6 +23,7 @@ from scores import Scores
 from vocals import Vocals,PRESETS
 from voice_library import VoiceLibrary
 from lyrics import Lyrics
+from inspiration import generate as generate_inspiration
 from svc import Conversions
 from sections import Sections, resolve_reference
 from score_review import ScoreReviews
@@ -108,6 +109,19 @@ def artwork_reference(identifier):
     directory=project_directory(identifier);meta=json.loads((directory/'preparation.json').read_text());state=json.loads((directory/'project.json').read_text())
     source=WORKFLOW.jobs.get(meta.get('generation_job_id'),{})
     return {'project_id':identifier,'title':state['title'],'lyrics':source.get('lyrics',''),'style':source.get('style','中文流行'),'source_sha256':meta['source_sha256']}
+
+def song_lyrics(identifier,start=False):
+    job=WORKFLOW.jobs.get(identifier)
+    if not job:raise ValueError('找不到该歌曲')
+    if job.get('instrumental'):return {'lyrics':'','job':None,'instrumental':True,'can_align':False}
+    try:directory=project_directory(identifier)
+    except ValueError:directory=None
+    if directory:return LYRICS.start(directory) if start else {**LYRICS.latest(directory),'can_align':True}
+    audio=STREAM.ROOT/'runs'/identifier/'complete.mp3'
+    if not job.get('download_ready') or not audio.is_file():
+        if start:raise ValueError('完整音频就绪后才能同步歌词')
+        return {'lyrics':job.get('lyrics',''),'job':None,'can_align':False}
+    return LYRICS.start_generated(job,audio) if start else {**LYRICS.latest_generated(job,audio),'can_align':True}
 
 def share_artwork(identifier,source_sha256):
     job=ARTWORK.latest(identifier)
@@ -459,6 +473,10 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             try:return self.serve(CONVERSIONS.asset(match[1],match[2])) if match[2] else self.json(200,CONVERSIONS.public(CONVERSIONS.read(match[1])))
             except ValueError as exc:return self.json(404,{'error':str(exc)})
+        match=re.fullmatch(r'/api/lyrics/song/([a-f0-9-]+)',path)
+        if match:
+            try:return self.json(200,song_lyrics(match[1]))
+            except ValueError as exc:return self.json(404,{'error':str(exc)})
         match=re.fullmatch(r'/api/lyrics/project/([a-f0-9-]+)',path)
         if match:
             try:return self.json(200,LYRICS.latest(project_directory(match[1])))
@@ -528,9 +546,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve(ROOT/'index.html')
         if path=='/assets/brand/osmanthus-logo.png':
             return self.serve(ROOT/'assets/brand/osmanthus-logo.png')
-        if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-create.js','/studio-creation-request.js'):
+        if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-inspiration.js','/studio-create.js','/studio-creation-request.js'):
             return self.serve(ROOT/path[1:])
-        if path in ('/','/app.js','/score.js','/vocals.js','/svc.js','/voice-library.js','/lyrics.js','/generation.js','/generation.css','/style.css','/interactions.css','/sections.js','/candidate_review.js'):
+        if path in ('/','/app.js','/seek-control.js','/score.js','/vocals.js','/svc.js','/voice-library.js','/lyrics.js','/generation.js','/generation.css','/style.css','/interactions.css','/sections.js','/candidate_review.js'):
             return self.serve(ROOT/('index.html' if path=='/' else path[1:]))
         match=re.fullmatch(r'/(audio|exports)/([a-f0-9-]+)/([^/]+)',path)
         if match:
@@ -625,10 +643,13 @@ class Handler(BaseHTTPRequestHandler):
                 with LOCK:
                     check_context(body)
                     return self.json(202,CONVERSIONS.start(PROJECT,body))
+            match=re.fullmatch(r'/api/lyrics/song/([a-f0-9-]+)',path)
+            if match:return self.json(202,song_lyrics(match[1],True))
             if path=='/api/lyrics/jobs':return self.json(202,LYRICS.start(project_directory(body.get('project_id'))))
             if path=='/api/creation/jobs':
                 if body.get('instrumental') is not True and body.get('request_id') not in CREATE_FLOW.requests:raise ValueError('请先展示并确认歌词，再生成歌曲；请刷新页面使用新的创作流程')
                 return self.json(202,CREATE_FLOW.start(body))
+            if path=='/api/creation/inspiration':return self.json(200,generate_inspiration(body))
             if path=='/api/creation/lyrics':return self.json(202,CREATE_FLOW.write_lyrics(body))
             match=re.fullmatch(r'/api/creation/jobs/([a-f0-9-]+)/resume',path)
             if match:return self.json(202,CREATE_FLOW.resume(match[1]))

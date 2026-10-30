@@ -188,3 +188,33 @@ html,body{margin:0;min-height:100%;background:#000}#os-mix-28{--studio-sidebar-w
 #os-mix-28 .lyric-heading h2{margin:0;font-size:18px}
 #os-mix-28 #lyric-status{font-size:12px;color:#aaa6b4;line-height:1.5}
 #os-mix-28 .lyric-panel{margin-bottom:24px}
+
+/* Compact creation controls with a real two-state instrumental switch. */
+#os-mix-28 .rs-prompt-actions>[data-rs=create],#os-mix-28 .rs-prompt-actions>[data-rs=idea],#os-mix-28 .rs-inputtools>.os-icon-button{display:grid;place-items:center;flex:0 0 40px;width:40px;height:40px;min-height:40px;padding:0;border:1px solid #ffffff24;border-radius:50%;background:transparent;color:#ecebef}
+#os-mix-28 .rs-prompt-actions>[data-rs=create]:hover,#os-mix-28 .rs-prompt-actions>[data-rs=idea]:hover{background:#ffffff12}
+#os-mix-28 .rs-prompt-actions>.os-icon-button svg{width:19px;height:19px}
+#os-mix-28 [data-rs=idea][aria-busy=true] svg{animation:os-record-turn 1.5s linear infinite}
+#os-mix-28 .studio-instrumental-toggle{gap:8px;border:0;background:transparent;padding:8px;color:#b9b7c0}
+#os-mix-28 .studio-instrumental-toggle[aria-checked=true]{background:transparent;color:#ead7b9}
+#os-mix-28 .studio-switch-track{display:block;position:relative;width:32px;height:19px;flex:none;border-radius:20px;background:#45454e;transition:background .15s}
+#os-mix-28 .studio-switch-track>span{position:absolute;width:13px;height:13px;left:3px;top:3px;border-radius:50%;background:#f5f3ef;transition:transform .15s}
+#os-mix-28 [aria-checked=true]>.studio-switch-track{background:#c19964}
+#os-mix-28 [aria-checked=true]>.studio-switch-track>span{transform:translateX(13px)}
+#os-mix-28 [data-rs-home-note]{display:block;min-height:18px;font-size:12px;color:#bcb7c1;margin:10px 4px 0}
+#os-mix-28 [data-rs-home-note]:empty{display:none}
+#os-mix-28 [data-rs-home-note][data-error=true]{color:#eab3b3}
+#os-mix-28 #song-title[hidden]{display:none!important}
+#os-mix-28 .rs-projecthead>div:first-of-type{min-width:0;max-width:none}
+#os-mix-28 .studio-back-home{display:grid;place-items:center;width:34px;height:34px;border:1px solid #ffffff1a;border-radius:50%;padding:8px;background:#1d1d21}
+#os-mix-28 .studio-back-home svg{width:17px;height:17px}
+#os-mix-28 #seek{min-width:0;max-width:100%;touch-action:none}
+@media(max-width:650px){#os-mix-28 .rs-prompt-actions{gap:5px}#os-mix-28 .rs-prompt-actions>[data-rs=create],#os-mix-28 .rs-prompt-actions>[data-rs=idea]{display:grid;flex-basis:36px;width:36px;height:36px;min-height:36px}#os-mix-28 .studio-instrumental-toggle{font-size:11px;gap:5px;padding:6px}}
+
+/* Lyrics use the actual player clock and their own medium scroll area. */
+#os-mix-28 .studio-detail-lyric-heading{display:flex;align-items:center;gap:16px;margin:26px 0 12px}
+#os-mix-28 .studio-detail-lyric-heading h2{margin:0}
+#os-mix-28 [data-lyrics-follow]{padding:5px 10px;font-size:11px;border:1px solid #ffffff20;border-radius:18px;background:transparent;color:#aaa5b0}
+#os-mix-28 [data-lyrics-follow][aria-pressed=true]{color:#ead5b9;border-color:#a58a6844}
+#os-mix-28 .studio-detail-copy .studio-detail-lyrics{position:relative;height:300px;max-height:40dvh;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0;padding:16px 0;white-space:normal;scroll-padding:80px}
+#os-mix-28 .studio-detail-lyrics [data-lyric-index]{padding:6px 10px;margin:0;min-height:33px;border-radius:8px;transition:background .18s,color .18s}
+#os-mix-28 .studio-detail-lyrics .is-active{background:#3d333c;color:#f4dfc3;font-weight:600}

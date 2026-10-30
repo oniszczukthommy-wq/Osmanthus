@@ -1,5 +1,7 @@
 const el=id=>document.getElementById(id);
-export function lyricSource(current,generation,state,preview){
+export function lyricSource(current,generation,state,preview,playback){
+  if(playback?.id&&playback.kind==='preview'){const song=playback.song||{};return {key:'candidate:'+playback.id,kind:'candidate',id:playback.id,title:song.title,lyrics:song.lyrics||'',...(song.instrumental?{instrumental:true}:{}),time:playback.time||0};}
+  if(playback?.kind==='engine'&&playback.id===current?.id){generation=null;state={...state,currentTime:playback.time};}
   if(generation&&!generation.project_ready&&generation.stage!=='error'&&(!state.playing||!preview.paused)){
     return {key:'generation:'+generation.id,kind:'generation',id:generation.id,title:generation.title,lyrics:generation.lyrics||'',...(generation.instrumental?{instrumental:true}:{}),time:preview.currentTime||0};}
   return current?{key:`project:${current.id}:${current.vocal_variant||'original'}:${current.source_sha256}`,kind:'project',id:current.id,title:current.title,...(current.instrumental?{instrumental:true}:{}),time:state.currentTime}:null;
@@ -24,7 +26,7 @@ export function initializeLyrics({getProject,transport}){
     const plain=text.split('\n').map(x=>x.trim()).filter(x=>x&&!x.startsWith('['));
     rows=plain.map((text,index)=>{const row=document.createElement('button');row.type='button';row.className='lyric-line';row.textContent=text;row.disabled=true;
       row.onclick=async()=>{const at=lines[index]?.start;if(!Number.isFinite(at)||!source)return;try{
-        if(source.kind==='project'){await transport.seek(source.id,at);}else preview.currentTime=at;
+        if(source.kind==='project'){await transport.seek(source.id,at);}else if(source.kind==='candidate'){await window.osmanthusSeekTo?.(at);}else preview.currentTime=at;
       }catch(e){status(e.message);}};return row;});
     box.replaceChildren(...rows);box.scrollTop=0;
     if(!rows.length){const p=document.createElement('p');p.textContent='正在生成歌词…';box.append(p);}
@@ -35,10 +37,12 @@ export function initializeLyrics({getProject,transport}){
   }
   async function load(expected,token){fetching=true;
     try{
-      const r=await fetch('/api/lyrics/project/'+expected.id,{signal:AbortSignal.timeout(12000)});const value=await r.json();if(!r.ok)throw Error(value.error||'暂时无法读取歌词');
+      const path=expected.kind==='candidate'?'/api/lyrics/song/'+expected.id:'/api/lyrics/project/'+expected.id;
+      const r=await fetch(path,{signal:AbortSignal.timeout(12000)});const value=await r.json();if(!r.ok)throw Error(value.error||'暂时无法读取歌词');
       if(token!==serial)return;
       showText(value.lyrics);job=value.job;
-      if(!job){const result=await fetch('/api/lyrics/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:expected.id}),signal:AbortSignal.timeout(12000)});
+      if(!job&&value.can_align===false){status('音频就绪后自动准备歌词同步');pollAt=performance.now()+2000;return;}
+      if(!job){const result=await fetch(expected.kind==='candidate'?path:'/api/lyrics/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:expected.id}),signal:AbortSignal.timeout(12000)});
         const created=await result.json();if(!result.ok)throw Error(created.error||'歌词同步暂未启动');if(token!==serial)return;job=created;}
       failed=['error','interrupted'].includes(job.stage);setTiming(job);
       status(job.stage==='ready'?(job.timing_review_score_job_id?'已采用乐句复核后的歌词时间 · 点击可定位；仍需听辨核对':'演唱同步已准备好 · 点击歌词可定位；算法对齐，漏唱或重复处仍需听辨核对'):failed?job.error:'歌词已生成 · 正在对齐实际演唱，完成后自动跟随');
@@ -46,30 +50,37 @@ export function initializeLyrics({getProject,transport}){
     }catch(e){if(token!==serial)return;failed=true;el('lyric-retry').hidden=false;status(e.name==='TimeoutError'?'歌词同步连接超时，可重试；播放不受影响':e.message);pollAt=performance.now()+15000;}
     finally{if(token===serial)fetching=false;}
   }
-  function choose(){const playback=window.osmanthusPlaybackState;if(playback?.kind==='preview'&&playback.song?.instrumental)return {key:'preview:'+playback.id,kind:'generation',id:playback.id,title:playback.song.title,instrumental:true,time:playback.time||0};const current=getProject(),generation=window.generationWorkflowState?.job,state=transport.state();
-    // The preview has its own clock until handoff; never highlight another song with it.
-    return lyricSource(current,generation,state,preview);
+  function choose(){return lyricSource(getProject(),window.generationWorkflowState?.job,transport.state(),preview,window.osmanthusPlaybackState);}
+  function paintSurfaces(selected,index){
+    for(const surface of document.querySelectorAll('[data-lyrics-song]')){
+      const current=surface.dataset.lyricsSong===selected.id,at=current?index:-1,stamp=selected.key+':'+at;
+      if(surface.dataset.lyricStamp===stamp)continue;surface.dataset.lyricStamp=stamp;
+      for(const row of surface.querySelectorAll('[data-lyric-index]')){const active=current&&Number(row.dataset.lyricIndex)===at;row.classList.toggle('is-active',active);if(active)row.setAttribute('aria-current','true');else row.removeAttribute('aria-current');}
+      if(at>=0&&surface.dataset.follow!=='false'){const row=surface.querySelector('[data-lyric-index="'+at+'"]');if(row)surface.scrollTo({top:Math.max(0,row.offsetTop-surface.clientHeight/2+row.clientHeight/2),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});}
+    }
   }
+  document.addEventListener('wheel',event=>{const surface=event.target.closest?.('[data-lyrics-song]');if(surface){surface.dataset.follow='false';const button=surface.parentElement.querySelector('[data-lyrics-follow]');button?.setAttribute('aria-pressed','false');}},{passive:true});
+  document.addEventListener('click',event=>{const button=event.target.closest?.('[data-lyrics-follow]');if(!button)return;const surface=button.parentElement.parentElement.querySelector('[data-lyrics-song]');if(!surface)return;const follow=surface.dataset.follow==='false';surface.dataset.follow=String(follow);button.setAttribute('aria-pressed',String(follow));delete surface.dataset.lyricStamp;});
   function paint(now){requestAnimationFrame(paint);if(now-lastTick<80)return;lastTick=now;
     const selected=choose();if(!selected)return;source=selected;
     if(selected.key!==sourceKey){sourceKey=selected.key;serial++;fetching=false;failed=false;job=null;lines=[];pollAt=0;
       if(rows[active]){rows[active].classList.remove('singing');rows[active].removeAttribute('aria-current');}active=-1;previousLine=-1;
       showText(selected.lyrics||'');setTiming(null);setFollow(true);el('lyric-title').textContent=selected.title;status(selected.kind==='project'?'正在读取这首歌的歌词…':'正在生成歌词…');}
     el('lyric-follow').disabled=!!selected.instrumental;
-    if(selected.instrumental){if(box.dataset.instrumental!=='true'){box.dataset.instrumental='true';box.replaceChildren();const p=document.createElement('p');p.textContent='纯音乐 · 不含演唱与歌词';box.append(p);}status('纯音乐，无需加载歌词');el('lyric-retry').hidden=true;el('lyric-clock').textContent=clock(selected.time);return;}delete box.dataset.instrumental;
+    if(selected.instrumental){if(box.dataset.instrumental!=='true'){box.dataset.instrumental='true';box.replaceChildren();const p=document.createElement('p');p.textContent='纯音乐 · 不含演唱与歌词';box.append(p);}status('纯音乐，无需加载歌词');el('lyric-retry').hidden=true;el('lyric-clock').textContent=clock(selected.time);paintSurfaces(selected,-1);return;}delete box.dataset.instrumental;
     if(selected.kind==='generation'){showText(selected.lyrics);status('歌词随歌曲一并生成 · 演唱同步将在整曲分轨完成后准备');}
     else if(!fetching&&now>=pollAt)void load(selected,serial);
     const index=lineAt(lines,selected.time);
     if(index!==active){if(rows[active]){rows[active].classList.remove('singing');rows[active].removeAttribute('aria-current');}
       active=index;if(rows[index]){rows[index].classList.add('singing');rows[index].setAttribute('aria-current','true');previousLine=index;if(follow)center(index);}}
-    el('lyric-clock').textContent=clock(selected.time);
+    paintSurfaces(selected,index);el('lyric-clock').textContent=clock(selected.time);
   }
   el('lyric-follow').onclick=()=>setFollow(!follow);
   for(const event of ['wheel','touchstart','pointerdown'])box.addEventListener(event,()=>setFollow(false),{passive:true});
   box.addEventListener('keydown',e=>{if(['ArrowDown','ArrowUp','PageDown','PageUp','Home','End'].includes(e.key))setFollow(false);});
-  el('lyric-retry').onclick=async()=>{if(source?.kind!=='project')return;const expected=source,token=serial;fetching=true;
-    try{const r=await fetch('/api/lyrics/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:expected.id}),signal:AbortSignal.timeout(12000)});const value=await r.json();if(!r.ok)throw Error(value.error||'重试失败');if(token!==serial)return;job=value;failed=false;setTiming(job);pollAt=0;status('正在准备演唱同步…');}
+  el('lyric-retry').onclick=async()=>{if(!['project','candidate'].includes(source?.kind))return;const expected=source,token=serial;fetching=true;
+    try{const r=await fetch(expected.kind==='candidate'?'/api/lyrics/song/'+expected.id:'/api/lyrics/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:expected.id}),signal:AbortSignal.timeout(12000)});const value=await r.json();if(!r.ok)throw Error(value.error||'重试失败');if(token!==serial)return;job=value;failed=false;setTiming(job);pollAt=0;status('正在准备演唱同步…');}
     catch(e){if(token===serial)status(e.message);}finally{if(token===serial)fetching=false;}};
-  Object.defineProperty(window,'lyricPlaybackState',{get:()=>({sourceKey,projectId:source?.kind==='project'?source.id:null,jobId:job?.id,stage:job?.stage,activeLine:active,currentLine:rows[active]?.textContent||null,follow,lineCount:rows.length,timedLineCount:lines.length,currentTime:source?.time,lines})});
+  Object.defineProperty(window,'lyricPlaybackState',{get:()=>({sourceKey,songId:source?.id,sourceKind:source?.kind,projectId:source?.kind==='project'?source.id:null,jobId:job?.id,stage:job?.stage,activeLine:active,currentLine:rows[active]?.textContent||null,follow,lineCount:rows.length,timedLineCount:lines.length,currentTime:source?.time,lines})});
   requestAnimationFrame(paint);
 }

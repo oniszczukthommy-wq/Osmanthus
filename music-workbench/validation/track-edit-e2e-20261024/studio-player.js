@@ -81,11 +81,10 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  <button type="button" class="sp-cover studio-player-cover" data-player="details" aria-label="查看当前歌曲详情" title="歌曲详情"><span class="sp-vinyl"><img data-player-cover alt="" hidden><span data-player-cover-fallback aria-hidden="true">${icon('music-2')}</span></span></button>
  <button type="button" class="sp-song-name" data-player="details" aria-label="查看当前歌曲详情"><strong data-player-title>选择一首歌</strong><span data-player-subtitle></span></button></div>
  <div class="sp-center"><div class="sp-controls" aria-label="播放控制">
- <button type="button" data-player="shuffle" aria-label="开启随机播放" aria-pressed="false" title="随机播放">${icon('shuffle')}</button>
  <button type="button" data-player="previous" aria-label="上一首" title="上一首">${icon('skip-back')}</button>
  <button type="button" class="sp-play" data-player="play" aria-label="播放歌曲" aria-pressed="false">${icon('play')}</button>
  <button type="button" data-player="next" aria-label="下一首" title="下一首">${icon('skip-forward')}</button>
- <button type="button" data-player="loop" aria-label="开启单曲循环" aria-pressed="false" title="单曲循环">${icon('repeat-2')}</button></div>
+ </div>
  <div class="sp-progress"><span data-player-position>00:00</span><div class="sp-seek-track"><input data-player-seek type="range" min="0" max="0" step="0.01" value="0" aria-label="歌曲播放进度" disabled></div><span data-player-duration>00:00</span></div></div>
  <div class="sp-actions">
  <button type="button" data-player="queue" aria-label="播放队列" aria-expanded="false" title="播放队列">${icon('list-music')}</button>
@@ -101,8 +100,8 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  root.append(footer);
  const q=selector=>footer.querySelector(selector),playButton=q('[data-player="play"]'),seek=q('[data-player-seek]'),volume=q('[data-player-volume]'),seekTrack=q('.sp-seek-track'),menu=q('.studio-player-menu');
  const icons=()=>globalThis.lucide?.createIcons({attrs:{width:18,height:18}});
- let preview=null,sourceKind='engine',loop=false,shuffle=false,scrubbing=false,scrubProject=null,seekTimer=null,lastNonzero=1,metadataKey='',stateKey='',lastPlaying=false,lastTime=0,lastId=null,frame=0,lastFrame=0,closed=false,manualPause=false,pendingLoop=false;
- let pendingMessage='',lastEngineProjectId=null,nativeIntent=0,shuffleBag=[],shuffleContext='',shuffleHistory=[],nativeLoading=null;
+ let preview=null,sourceKind='engine',scrubbing=false,scrubProject=null,seekTimer=null,lastNonzero=1,metadataKey='',stateKey='',lastPlaying=false,lastTime=0,lastId=null,frame=0,lastFrame=0,closed=false,manualPause=false,pendingLoop=false;
+ let pendingMessage='',lastEngineProjectId=null,nativeIntent=0,nativeLoading=null;
  const registeredSongs=new Map(),ownedAudio=new Map(),nativeRequests=new WeakMap();
  const songById=id=>getSong?.(id)||getSongs().find(s=>s.id===id)||registeredSongs.get(id)||null;
  const controller=createPlaybackQueue(engine,{onChange:()=>paint(true)});
@@ -181,25 +180,16 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   }
   return getSongs().filter(song=>song.id&&(song.project_ready!==false||song.media?.complete||nativeById(song.id)?.getAttribute('src'))).map(song=>({id:song.id,song}));
  }
- function chooseShuffled(choices,id,direction){
-  const ids=choices.map(item=>item.id),key=ids.join('|');
-  if(key!==shuffleContext){shuffleContext=key;shuffleBag=[];shuffleHistory=[];}
-  if(direction<0){while(shuffleHistory.length){const prior=shuffleHistory.pop();if(prior!==id&&ids.includes(prior))return choices.find(item=>item.id===prior);}}
-  shuffleBag=shuffleBag.filter(value=>value!==id&&ids.includes(value));
-  if(!shuffleBag.length)shuffleBag=ids.filter(value=>value!==id);
-  if(!shuffleBag.length)return choices[0];
-  const at=Math.floor(Math.random()*shuffleBag.length),next=shuffleBag.splice(at,1)[0];return choices.find(item=>item.id===next);
- }
  async function skip(direction){
   const state=current();manualPause=false;if(direction<0&&state.time>3){await seekTo(0);return;}
   const choices=contextChoices(state);if(!choices.length)return;
-  const index=choices.findIndex(item=>item.id===state.id),next=shuffle?chooseShuffled(choices,state.id,direction):choices[(Math.max(0,index)+direction+choices.length)%choices.length];
+  const index=choices.findIndex(item=>item.id===state.id),next=choices[(Math.max(0,index)+direction+choices.length)%choices.length];
   if(!next)return;
   if(next.audio)await playPreview(next.audio,{at:0});else await playSong(next.id,{toggle:false,at:0});
-  if(shuffle&&direction>0&&state.id&&state.id!==next.id)shuffleHistory.push(state.id);
  }
  async function seekTo(at){
   clearTimeout(seekTimer);const state=current();at=Math.max(0,Math.min(state.duration,Number(at)||0));
+  if(at>=state.duration){manualPause=true;if(state.kind==='preview')preview?.pause();else engine.transport.pause();}
   if(state.kind==='preview'){if(preview&&Number.isFinite(preview.duration))preview.currentTime=at;paint(true);return;}
   if(!state.id||!state.ready||controller.working)return;await engine.transport.seek(state.id,at);paint(true);
  }
@@ -211,9 +201,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  function onClick(event){const button=event.target.closest('[data-player]');if(!button)return;const action=button.dataset.player;
   if(action==='play')void safe(toggle);if(action==='previous')void safe(()=>skip(-1));if(action==='next')void safe(()=>skip(1));
   if(action==='cancel-loading')pause();
-  if(action==='shuffle'){shuffle=!shuffle;shuffleBag=[];shuffleHistory=[];paint(true);}
   if(action==='mute'){const state=current();changeVolume(state.volume>0?0:lastNonzero);}
-  if(action==='loop'){loop=!loop;paint(true);}
   if(action==='share')emitAction('share',onShare);if(action==='queue')emitAction('queue',onQueue);if(action==='favorite')emitAction('favorite',onFavorite);
   if(action==='details'||action==='details-toggle')void safe(()=>showDetails(action==='details-toggle'));if(action==='edit')void safe(edit);
   if(action==='copy'&&onCopyShare)emitAction('copy-share',onCopyShare);
@@ -233,6 +221,8 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   if(request===undefined)nativeIntent++;
   if(preview&&preview!==audio)preview.pause();manualPause=true;controller.pause();sourceKind='preview';preview=audio;manualPause=false;pendingMessage='';audio.volume=engine.transport.state().volume;paint(true);
  }
+ function onUserSeek(event){if(event.detail?.time>=event.detail?.duration)manualPause=true;}
+ window.addEventListener('osmanthus:user-seek',onUserSeek);
  document.addEventListener('play',onNativePlay,true);
  function onNativeBuffer(event){if(event.target!==preview)return;if(['waiting','stalled','loadstart'].includes(event.type)){if(!preview.paused)nativeLoading=preview;}else if(nativeLoading===preview)nativeLoading=null;paint(true);}
  const bufferEvents=['waiting','stalled','loadstart','playing','canplay','pause','ended','error'];for(const type of bufferEvents)document.addEventListener(type,onNativeBuffer,true);
@@ -251,8 +241,6 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   if(mk!==metadataKey){metadataKey=mk;q('[data-player-title]').textContent=studio.displaySongTitle?.(song.title)||song.title||'选择一首歌';q('[data-player-subtitle]').textContent=state.kind==='preview'?song.style||song.candidate_label||'原始歌曲':song.style||'当前作品';footer.dataset.songId=state.id||'';footer.dataset.source=state.kind;updateCover(song);}
   setIcon(playButton,busy?'loader-circle':state.playing?'pause':'play');playButton.setAttribute('aria-label',busy?'取消歌曲加载':state.playing?'暂停歌曲':'播放歌曲');playButton.setAttribute('aria-pressed',String(state.playing));playButton.disabled=!state.id;
   const like=q('[data-player="favorite"]'),liked=!!song.favorite;like.setAttribute('aria-pressed',String(liked));like.setAttribute('aria-label',liked?'取消收藏当前歌曲':'收藏当前歌曲');
-  const random=q('[data-player="shuffle"]');random.setAttribute('aria-pressed',String(shuffle));random.setAttribute('aria-label',shuffle?'关闭随机播放':'开启随机播放');
-  const repeat=q('[data-player="loop"]');repeat.setAttribute('aria-pressed',String(loop));repeat.setAttribute('aria-label',loop?'关闭单曲循环':'开启单曲循环');
   for(const key of ['favorite','share','more','details','details-toggle','queue'])for(const button of footer.querySelectorAll(`[data-player="${key}"]`))button.disabled=!state.id;
   if(state.volume>0)lastNonzero=state.volume;
   const mute=q('[data-player="mute"]');setIcon(mute,state.volume>0?'volume-2':'volume-x');mute.setAttribute('aria-pressed',String(state.volume===0));mute.setAttribute('aria-label',state.volume>0?'播放器静音':'恢复播放器音量');
@@ -264,10 +252,11 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   const sk=JSON.stringify([state.id,state.kind,state.playing,busy]);if(sk!==stateKey){stateKey=sk;onStateChange?.({...state,busy});root.dispatchEvent(new CustomEvent('osmanthus:playback',{detail:{id:state.id,kind:state.kind,playing:state.playing,busy},bubbles:true}));}
   const ended=lastId===state.id&&lastPlaying&&!state.playing&&!manualPause&&!busy&&state.duration>0&&state.time>=state.duration-.08&&lastTime<state.duration;
   lastPlaying=state.playing;lastTime=state.time;lastId=state.id;
-  if(ended&&!pendingLoop){pendingLoop=true;void safe(async()=>{if(loop){if(state.kind==='preview')await playPreview(preview,{at:0});else await playSong(state.id,{toggle:false,at:0});}else await skip(1);}).finally(()=>{pendingLoop=false;});}
+  if(ended&&!pendingLoop){pendingLoop=true;void safe(async()=>{await skip(1);}).finally(()=>{pendingLoop=false;});}
  }
  function tick(now){if(closed)return;frame=requestAnimationFrame(tick);if(now-lastFrame<40)return;lastFrame=now;paint();}
  icons();paint(true);frame=requestAnimationFrame(tick);
- const result={playSong,pause,cancelPending,registerPreviewSong,sync:()=>paint(true),get state(){return{...current(),busy:controller.loading||!!nativeLoading,loop,shuffle};},destroy(){closed=true;cancelPending();controller.destroy();cancelAnimationFrame(frame);clearTimeout(seekTimer);for(const audio of ownedAudio.values()){audio.pause();audio.removeAttribute('src');audio.load();audio.remove();}ownedAudio.clear();if(window.pauseGenerationPreview===pauseAllPreviews)window.pauseGenerationPreview=previousPausePreviews;footer.removeEventListener('click',onClick);for(const type of bufferEvents)document.removeEventListener(type,onNativeBuffer,true);document.removeEventListener('play',onNativePlay,true);document.removeEventListener('click',onDocumentClick);document.removeEventListener('keydown',onKey);footer.remove();}};
+ window.osmanthusSeekTo=seekTo;
+ const result={seekTo,playSong,pause,cancelPending,registerPreviewSong,sync:()=>paint(true),get state(){return{...current(),busy:controller.loading||!!nativeLoading};},destroy(){closed=true;if(window.osmanthusSeekTo===seekTo)delete window.osmanthusSeekTo;cancelPending();controller.destroy();cancelAnimationFrame(frame);clearTimeout(seekTimer);for(const audio of ownedAudio.values()){audio.pause();audio.removeAttribute('src');audio.load();audio.remove();}ownedAudio.clear();if(window.pauseGenerationPreview===pauseAllPreviews)window.pauseGenerationPreview=previousPausePreviews;footer.removeEventListener('click',onClick);for(const type of bufferEvents)document.removeEventListener(type,onNativeBuffer,true);window.removeEventListener('osmanthus:user-seek',onUserSeek);document.removeEventListener('play',onNativePlay,true);document.removeEventListener('click',onDocumentClick);document.removeEventListener('keydown',onKey);footer.remove();}};
  Object.defineProperty(window,'osmanthusPlaybackState',{configurable:true,get:()=>result.state});return result;
 }
