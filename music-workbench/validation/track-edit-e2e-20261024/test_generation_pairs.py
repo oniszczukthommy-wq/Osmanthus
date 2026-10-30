@@ -40,6 +40,13 @@ class PairTests(unittest.TestCase):
         w.STREAM.persist(j)
         return j
 
+    def test_final_remote_audio_can_preview_before_local_export_file_exists(self):
+        batch=self.batch();job=self.work.jobs[batch['candidate_ids']['A']]
+        job.update(audio_url='https://example.test/final.mp3',status='done',download_ready=False)
+        value=self.service.public(batch)['candidates'][0]
+        self.assertTrue(value['media']['preview_complete'].endswith('/preview-complete'))
+        self.assertIsNone(value['media']['complete']);self.assertFalse(value['can_select'])
+
     def test_shared_lyrics_and_two_distinct_prompts_and_ids(self):
         b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
         self.assertNotEqual(a['id'],c['id']);self.assertEqual(a['lyrics'],c['lyrics'])

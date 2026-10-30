@@ -70,6 +70,12 @@ export function mixOverviewPeaks(project,trackBuffers,points=190){
  return result;
 }
 
+export function streamNeedsContinuation(song,{url='',time=0}={}){
+ if(!url.endsWith('/stream'))return false;
+ const duration=song?.duration_seconds;
+ return !(song?.status==='done'&&Number.isFinite(duration)&&duration>0&&time>=duration-.5);
+}
+
 function icon(name){return `<i data-lucide="${name}" aria-hidden="true"></i>`;}
 
 export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onShare=null,onCopyShare=null,onExport=null,onDetails=null,onQueue=null,onFavorite=null,onStateChange=null}={}){
@@ -101,7 +107,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  const q=selector=>footer.querySelector(selector),playButton=q('[data-player="play"]'),seek=q('[data-player-seek]'),volume=q('[data-player-volume]'),seekTrack=q('.sp-seek-track'),menu=q('.studio-player-menu');
  const icons=()=>globalThis.lucide?.createIcons({attrs:{width:18,height:18}});
  let preview=null,sourceKind='engine',scrubbing=false,scrubProject=null,seekTimer=null,lastNonzero=1,metadataKey='',stateKey='',lastPlaying=false,lastTime=0,lastId=null,frame=0,lastFrame=0,closed=false,manualPause=false,pendingLoop=false;
- let pendingMessage='',lastEngineProjectId=null,nativeIntent=0,nativeLoading=null;
+ let pendingMessage='',lastEngineProjectId=null,nativeIntent=0,nativeLoading=null,pendingContinuation=null;
  const registeredSongs=new Map(),ownedAudio=new Map(),nativeRequests=new WeakMap();
  const songById=id=>getSong?.(id)||getSongs().find(s=>s.id===id)||registeredSongs.get(id)||null;
  const controller=createPlaybackQueue(engine,{onChange:()=>paint(true)});
@@ -111,19 +117,26 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  function registerPreviewSong(song){
   if(!song||typeof song.id!=='string'||!song.id)throw Error('歌曲标识无效。');
   registeredSongs.set(song.id,{...registeredSongs.get(song.id),...song});
-  const existing=nativeById(song.id),raw=song.media?.complete||song.media?.stream;
-  if(existing?.getAttribute('src')&&(!ownedAudio.has(song.id)||!raw||!existing.paused))return existing;
+  const existing=nativeById(song.id),finished=song.media?.complete||song.media?.preview_complete,continuation=pendingContinuation?.id===song.id&&pendingContinuation.intent===nativeIntent&&!manualPause?pendingContinuation:existing&&(nativeLoading===existing||song.status==='done')&&!manualPause&&finished&&existing.dataset.url?.endsWith('/stream')?{id:song.id,at:existing.currentTime||0,intent:nativeIntent}:null,raw=finished||song.media?.stream;
+  if(!continuation&&existing?.getAttribute('src')&&(!ownedAudio.has(song.id)||!raw||!existing.paused))return existing;
+  if(continuation&&(!finished||(continuation.localOnly&&!song.media?.complete)))return existing;
+  if(continuation&&song.duration_seconds>0&&continuation.at>=song.duration_seconds-.5){pendingContinuation=null;nativeLoading=null;manualPause=true;return existing;}
   if(!raw)return existing||null;
   let url;try{url=new URL(raw,location.href);}catch{throw Error('歌曲音频地址无效。');}
   if(url.origin!==location.origin)throw Error('请使用工作台提供的歌曲音频地址。');
   const audio=existing||document.createElement('audio');
   if(!existing){audio.hidden=true;audio.preload='none';audio.dataset.candidate=song.id;audio.dataset.playerOwnedPreview='true';footer.append(audio);ownedAudio.set(song.id,audio);}
-  if(audio.getAttribute('src')!==url.href){const resumeAt=audio.currentTime||0;audio.src=url.href;if(resumeAt>0)audio.dataset.playerResumeAt=String(resumeAt);}
-  audio.dataset.url=raw;return audio;
+  if(audio.getAttribute('src')!==url.href){lastPlaying=false;const resumeAt=audio.ended?0:audio.currentTime||0;audio.src=url.href;if(resumeAt>0)audio.dataset.playerResumeAt=String(resumeAt);}
+  audio.dataset.url=raw;if(continuation&&finished){pendingContinuation=null;void safe(()=>playPreview(audio,{at:continuation.at}));}return audio;
  }
+ function recordNativeEvent(event){const audio=event.target;if(!audio?.dataset?.candidate)return;const type=event.type;
+  if(!['playing','waiting','stalled','pause','ended','error'].includes(type))return;
+  void fetch('/api/generation/jobs/'+audio.dataset.candidate+'/telemetry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({event:type,current_time:audio.currentTime||0,source:audio.dataset.url?.endsWith('/stream')?'stream':'complete'}),keepalive:true}).catch(()=>{});
+ }
+ const telemetryEvents=['playing','waiting','stalled','pause','ended','error'];for(const type of telemetryEvents)document.addEventListener(type,recordNativeEvent,true);
  function previewSong(audio){
   const id=audio.dataset.candidate,card=audio.closest('[data-candidate-card]'),batch=audio.closest('.studio-batch'),song=songById(id)||{};
-  return {...song,id,title:song.title||batch?.querySelector('h3')?.textContent||'歌曲候选',duration:seconds(audio.duration)||song.duration_seconds||song.duration||0,candidate_label:card?.querySelector('strong')?.textContent||song.candidate_label||'原始歌曲'};
+  return {...song,id,title:song.title||batch?.querySelector('h3')?.textContent||'歌曲候选',duration:song.duration_seconds||seconds(audio.duration)||song.duration||0,candidate_label:card?.querySelector('strong')?.textContent||song.candidate_label||'原始歌曲'};
  }
  function current(){
   const state=engine.transport.state();
@@ -143,8 +156,8 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   image.alt=`${song.title||'歌曲'}封面`;image.onload=()=>{if(image.dataset.source===url){image.hidden=false;fallback.hidden=true;}};
   image.onerror=()=>{image.hidden=true;fallback.hidden=false;};image.src=url;
  }
- function cancelPending(){nativeIntent++;nativeLoading=null;controller.cancelPending();clearTimeout(seekTimer);}
- function pause(){manualPause=true;pendingMessage='';cancelPending();controller.pause();if(preview)preview.pause();paint(true);}
+ function cancelPending(){nativeIntent++;nativeLoading=null;pendingContinuation=null;controller.cancelPending();clearTimeout(seekTimer);}
+ function pause(){root.dispatchEvent(new CustomEvent('osmanthus:manual-playback',{bubbles:true}));manualPause=true;pendingMessage='';cancelPending();controller.pause();if(preview)preview.pause();paint(true);}
  async function playPreview(audio,{at}={}){
   cancelPending();const token=nativeIntent;nativeRequests.set(audio,token);
   manualPause=false;pendingMessage='';if(preview&&preview!==audio)preview.pause();preview=audio;sourceKind='preview';controller.pause();
@@ -157,6 +170,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   finally{if(nativeRequests.get(audio)===token)nativeRequests.delete(audio);if(token===nativeIntent&&nativeLoading===audio)nativeLoading=null;paint(true);}
  }
  async function playSong(id,options={}){
+  if(!options.automatic)root.dispatchEvent(new CustomEvent('osmanthus:manual-playback',{bubbles:true}));
   const state=current();
   if(options.toggle!==false&&!controller.working&&state.id===id&&state.playing){pause();return{paused:true,project_id:id};}
   const song=songById(id);
@@ -165,6 +179,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   const result=await controller.playSong(id,options);paint(true);return result;
  }
  async function toggle(){
+  root.dispatchEvent(new CustomEvent('osmanthus:manual-playback',{bubbles:true}));
   if(controller.loading||nativeLoading){pause();return;}
   const state=current();pendingMessage='';if(state.playing){pause();return;}
   manualPause=false;
@@ -224,7 +239,12 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  function onUserSeek(event){if(event.detail?.time>=event.detail?.duration)manualPause=true;}
  window.addEventListener('osmanthus:user-seek',onUserSeek);
  document.addEventListener('play',onNativePlay,true);
- function onNativeBuffer(event){if(event.target!==preview)return;if(['waiting','stalled','loadstart'].includes(event.type)){if(!preview.paused)nativeLoading=preview;}else if(nativeLoading===preview)nativeLoading=null;paint(true);}
+ function onNativeBuffer(event){if(event.target!==preview)return;
+  if(['ended','error'].includes(event.type)&&!manualPause&&(streamNeedsContinuation(previewSong(preview),{url:preview.dataset.url||'',time:preview.currentTime||0})||(event.type==='error'&&preview.dataset.url?.endsWith('/preview-complete')))){
+   const audio=preview,at=audio.currentTime||0;audio.pause();pendingContinuation={id:audio.dataset.candidate,at,intent:nativeIntent,localOnly:audio.dataset.url?.endsWith('/preview-complete')};nativeLoading=audio;lastPlaying=false;const song=songById(audio.dataset.candidate);if(song?.media?.complete||song?.media?.preview_complete)registerPreviewSong(song);paint(true);return;
+  }
+  if(['waiting','stalled','loadstart'].includes(event.type)){if(!preview.paused)nativeLoading=preview;}else if(nativeLoading===preview&&!pendingContinuation)nativeLoading=null;paint(true);
+ }
  const bufferEvents=['waiting','stalled','loadstart','playing','canplay','pause','ended','error'];for(const type of bufferEvents)document.addEventListener(type,onNativeBuffer,true);
  const previousPausePreviews=window.pauseGenerationPreview;
  const pauseAllPreviews=()=>{previousPausePreviews?.();if(preview)preview.pause();};
@@ -247,16 +267,16 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   if(document.activeElement!==volume)volume.value=Math.round(state.volume*100);volume.setAttribute('aria-valuetext',`${Math.round(state.volume*100)}%`);
   seek.disabled=!state.ready||busy||!state.duration;seek.max=state.duration||0;
   if(!scrubbing){seek.value=Math.min(state.duration,state.time)||0;q('[data-player-position]').textContent=clock(state.time);paintProgress(state.time,state.duration);}
-  seek.setAttribute('aria-valuetext',`${clock(state.time)}，共${clock(state.duration)}`);q('[data-player-duration]').textContent=clock(state.duration);
+  seek.setAttribute('aria-valuetext',`${clock(state.time)}，共${clock(state.duration)}`);q('[data-player-duration]').textContent=state.kind==='preview'&&!state.duration&&song.media?.stream?'生成中':clock(state.duration);
   const text=studio.statusIsTransient?.(pendingMessage)?'':pendingMessage;q('[data-player-status]').hidden=!text;if(q('[data-player-status]').textContent!==text)q('[data-player-status]').textContent=text;
   const sk=JSON.stringify([state.id,state.kind,state.playing,busy]);if(sk!==stateKey){stateKey=sk;onStateChange?.({...state,busy});root.dispatchEvent(new CustomEvent('osmanthus:playback',{detail:{id:state.id,kind:state.kind,playing:state.playing,busy},bubbles:true}));}
   const ended=lastId===state.id&&lastPlaying&&!state.playing&&!manualPause&&!busy&&state.duration>0&&state.time>=state.duration-.08&&lastTime<state.duration;
   lastPlaying=state.playing;lastTime=state.time;lastId=state.id;
-  if(ended&&!pendingLoop){pendingLoop=true;void safe(async()=>{await skip(1);}).finally(()=>{pendingLoop=false;});}
+  if(ended&&!preview?.error&&!pendingContinuation&&!pendingLoop){pendingLoop=true;void safe(async()=>{await skip(1);}).finally(()=>{pendingLoop=false;});}
  }
  function tick(now){if(closed)return;frame=requestAnimationFrame(tick);if(now-lastFrame<40)return;lastFrame=now;paint();}
  icons();paint(true);frame=requestAnimationFrame(tick);
  window.osmanthusSeekTo=seekTo;
- const result={seekTo,playSong,pause,cancelPending,registerPreviewSong,sync:()=>paint(true),get state(){return{...current(),busy:controller.loading||!!nativeLoading};},destroy(){closed=true;if(window.osmanthusSeekTo===seekTo)delete window.osmanthusSeekTo;cancelPending();controller.destroy();cancelAnimationFrame(frame);clearTimeout(seekTimer);for(const audio of ownedAudio.values()){audio.pause();audio.removeAttribute('src');audio.load();audio.remove();}ownedAudio.clear();if(window.pauseGenerationPreview===pauseAllPreviews)window.pauseGenerationPreview=previousPausePreviews;footer.removeEventListener('click',onClick);for(const type of bufferEvents)document.removeEventListener(type,onNativeBuffer,true);window.removeEventListener('osmanthus:user-seek',onUserSeek);document.removeEventListener('play',onNativePlay,true);document.removeEventListener('click',onDocumentClick);document.removeEventListener('keydown',onKey);footer.remove();}};
+ const result={seekTo,playSong,pause,cancelPending,registerPreviewSong,sync:()=>paint(true),get state(){return{...current(),busy:controller.loading||!!nativeLoading};},destroy(){closed=true;if(window.osmanthusSeekTo===seekTo)delete window.osmanthusSeekTo;cancelPending();controller.destroy();cancelAnimationFrame(frame);clearTimeout(seekTimer);for(const audio of ownedAudio.values()){audio.pause();audio.removeAttribute('src');audio.load();audio.remove();}ownedAudio.clear();if(window.pauseGenerationPreview===pauseAllPreviews)window.pauseGenerationPreview=previousPausePreviews;footer.removeEventListener('click',onClick);for(const type of bufferEvents)document.removeEventListener(type,onNativeBuffer,true);window.removeEventListener('osmanthus:user-seek',onUserSeek);document.removeEventListener('play',onNativePlay,true);for(const type of telemetryEvents)document.removeEventListener(type,recordNativeEvent,true);document.removeEventListener('click',onDocumentClick);document.removeEventListener('keydown',onKey);footer.remove();}};
  Object.defineProperty(window,'osmanthusPlaybackState',{configurable:true,get:()=>result.state});return result;
 }

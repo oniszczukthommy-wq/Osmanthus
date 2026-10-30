@@ -74,7 +74,7 @@ def worker(job:dict)->None:
         network_failures=0
         while time.monotonic()<deadline:
             try:
-                response=request_json('https://open.yinchaoyongxian.com/api/v1/task/query?'+urllib.parse.urlencode({'task_id':job['task_id']}),key)
+                response=request_json('https://open.yinchaoyongxian.com/api/v1/task/query?'+urllib.parse.urlencode({'task_id':job['task_id']}),key,timeout=12)
                 network_failures=0
             except (urllib.error.URLError,TimeoutError,OSError) as error:
                 network_failures+=1
@@ -125,8 +125,10 @@ def worker(job:dict)->None:
 def media_curl(url:str,resolve_media:bool=False):
     host=urllib.parse.urlparse(url).hostname
     if urllib.parse.urlparse(url).scheme not in ('https','http') or not host:raise ValueError('Invalid provider media URL')
-    args=['curl','--noproxy','*','--no-buffer','--location','--fail','--silent','--show-error','--connect-timeout','10','--max-time','600',
-          '--speed-time','20','--speed-limit','512']
+    args=['curl','--noproxy','*','--no-buffer','--location','--fail','--silent','--show-error','--connect-timeout','10','--max-time','600']
+    # A generation stream can legitimately pause between audio chunks. Apply
+    # the low-speed watchdog only to completed CDN file transfers.
+    if host!='open.yinchaoyongxian.com':args+=['--speed-time','20','--speed-limit','512']
     # Prefer current system DNS. A previously saved CDN IP can stop responding;
     # only retry with freshly resolved DNS after the normal transfer fails.
     if host=='api-cdn.yinchaoyongxian.com' and resolve_media:
@@ -215,8 +217,11 @@ class Handler(BaseHTTPRequestHandler):
                     data=source.read(min(65536,remaining));self.wfile.write(data);remaining-=len(data)
         except (BrokenPipeError,ConnectionResetError):pass
 
-    def send_stream(self,job):
-        if not job.get('pipe_url'):self.json(409,{'error':'Provider has not returned a stream URL'});return
+    def send_stream(self,job,kind='stream'):
+        url=job.get('pipe_url' if kind=='stream' else 'audio_url')
+        if not url:self.json(409,{'error':'歌曲音频地址尚未返回'});return
+        sent=False
+        counter='stream' if kind=='stream' else 'preview_complete'
         process=None
         try:
             first=b''
@@ -224,35 +229,38 @@ class Handler(BaseHTTPRequestHandler):
             # Retry connection setup only. Never restart a stream after audio
             # bytes have reached the browser, which would duplicate playback.
             for attempt in range(5):
-                process=media_curl(job['pipe_url'])
+                process=media_curl(url,resolve_media=kind!='stream' and attempt==1)
                 first=process.stdout.read1(4096)
                 if first:break
-                diagnostic=process.stderr.read(500).decode('utf-8','replace').replace(job['pipe_url'],'<media-url>')
+                diagnostic=process.stderr.read(500).decode('utf-8','replace').replace(url,'<media-url>')
                 process.wait(timeout=5)
-                event(job,'stream_connection_retry',attempt=attempt+1)
+                event(job,counter+'_connection_retry',attempt=attempt+1)
                 time.sleep(.3)
             if not first:raise RuntimeError(diagnostic)
             if first.lstrip().startswith(b'#EXTM3U'):
                 raise RuntimeError('Provider returned an HLS playlist; progressive MP3 player does not support this format yet')
             if first.lstrip().startswith((b'<html',b'<!DOCTYPE',b'{"')):raise RuntimeError('Stream did not return audio data')
             with LOCK:
-                job['stream_error']=None
-                if job.get('stream_proxy_first_byte_seconds') is None:job['stream_proxy_first_byte_seconds']=round(time.time()-job['created_at'],3)
-            event(job,'stream_proxy_first_byte',provider_status=job['status'])
-            self.send_response(200);self.send_header('Content-Type','audio/mpeg');self.send_header('Transfer-Encoding','chunked');self.send_header('Cache-Control','no-store');self.send_header('Accept-Ranges','none');self.end_headers()
+                job[counter+'_error']=None
+                if job.get(counter+'_proxy_first_byte_seconds') is None:job[counter+'_proxy_first_byte_seconds']=round(time.time()-job['created_at'],3)
+            event(job,counter+'_proxy_first_byte',provider_status=job['status'])
+            self.send_response(200);sent=True;self.send_header('Content-Type','audio/mpeg');self.send_header('Transfer-Encoding','chunked');self.send_header('Cache-Control','no-store');self.send_header('Accept-Ranges','none');self.end_headers()
             chunk=first
             while chunk:
                 self.wfile.write(f'{len(chunk):X}\r\n'.encode('ascii')+chunk+b'\r\n');self.wfile.flush()
-                with LOCK:job['stream_proxy_bytes']=job.get('stream_proxy_bytes',0)+len(chunk)
+                with LOCK:job[counter+'_proxy_bytes']=job.get(counter+'_proxy_bytes',0)+len(chunk)
                 chunk=process.stdout.read1(16384)
+            if process.wait(timeout=5)!=0:
+                diagnostic=process.stderr.read(500).decode('utf-8','replace').replace(url,'<stream-url>')
+                raise RuntimeError('Provider stream interrupted: '+diagnostic[:300])
             self.wfile.write(b'0\r\n\r\n');self.wfile.flush()
-            if process.wait(timeout=5)!=0:raise RuntimeError('Provider stream ended with a transport error')
-            event(job,'stream_proxy_end',bytes=job['stream_proxy_bytes'])
-        except (BrokenPipeError,ConnectionResetError):event(job,'stream_client_disconnected')
+            event(job,counter+'_proxy_end',bytes=job[counter+'_proxy_bytes'])
+        except (BrokenPipeError,ConnectionResetError):event(job,counter+'_client_disconnected')
         except Exception as error:
-            with LOCK:job['stream_error']=str(error)[:700]
-            event(job,'stream_proxy_error',message=str(error)[:700])
-            if not job.get('stream_proxy_first_byte_seconds'):self.json(502,{'error':str(error)[:500]})
+            with LOCK:job[counter+'_error']=str(error)[:700]
+            event(job,counter+'_proxy_error',message=str(error)[:700])
+            if not sent:self.json(502,{'error':str(error)[:500]})
+            else:self.close_connection=True
         finally:
             if process and process.poll() is None:process.terminate()
 

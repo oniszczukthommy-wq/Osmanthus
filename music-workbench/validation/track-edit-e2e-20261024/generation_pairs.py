@@ -111,7 +111,8 @@ class GenerationPairs:
                     can_resume=(job.get('stage')=='error' and bool(job.get('task_id')) and not definitely_failed(job)),
                     can_retry_generation=definitely_failed(job),
                     media={'stream':f'/api/generation/media/{identifier}/stream' if job.get('pipe_url') else None,
-                           'complete':f'/api/generation/media/{identifier}/complete' if job.get('download_ready') else None})
+                           'complete':f'/api/generation/media/{identifier}/complete' if job.get('download_ready') else None,
+                           'preview_complete':f'/api/generation/media/{identifier}/preview-complete' if job.get('status')=='done' and job.get('audio_url') else None})
                 candidates.append(value)
             result['candidates']=candidates
             selected=self.workflow.jobs.get(batch.get('selected_candidate_id'))

@@ -123,7 +123,7 @@ await test('instrumental payload excludes retained lyrics and vocal settings wit
 await test('approval saves edited lyrics before confirming returned version and fingerprint',async()=>{
  const calls=[],nodes={'studio-confirm-lyrics':{},'studio-review-title':{value:'edited title'},'studio-review-lyrics':{value:'edited lyrics'},'studio-dialog':{close:()=>{}},'studio-create-status':{}};
  const saved={id,stage:'ready',version:2,fingerprint:'saved-fingerprint'},result={draft:{...saved,stage:'confirmed'},batch:{id,candidates:[]}};
- const context={draftReview:{id,stage:'ready',version:1,style:'中文流行',voice:'男声'},draftConfirming:false,$:key=>nodes[key],activeCreationId:null,activeBatchId:null,
+ const context={draftReview:{id,stage:'ready',version:1,style:'中文流行',voice:'男声'},draftConfirming:false,$:key=>nodes[key],activeCreationId:null,activeBatchId:null,generationAutoplay:{arm:()=>{}},
  api:async(path,body)=>{calls.push({path,body});return path.endsWith('/save')?saved:result;},refresh:async()=>{},creationProgress:()=>'',renderBatches:()=>{}};
  const fn=source.slice(source.indexOf('async function confirmLyricDraft('),source.indexOf('async function generate('));
  vm.runInNewContext(fn+';globalThis.result=confirmLyricDraft();',context);await context.result;
@@ -156,13 +156,13 @@ await test('lyric polling and reopening preserve unsaved edits; stale polls cann
 });
 await test('successful lyric save plus failed confirmation preserves subsequent edits through polling',async()=>{
  const f=reviewFixture(),d={id,stage:'ready',version:1,title:'title',lyrics:'original',can_confirm:true},saved={...d,version:2,lyrics:'edited lyrics',fingerprint:'saved'};f.show(d);f.fields['studio-review-lyrics'].value='edited lyrics';
- Object.assign(f.context,{activeCreationId:null,activeBatchId:null,api:async path=>{if(path.endsWith('/save'))return saved;throw error(500);},refresh:async()=>{},renderBatches:()=>{},creationProgress:()=>''});
+ Object.assign(f.context,{activeCreationId:null,activeBatchId:null,generationAutoplay:{arm:()=>{}},api:async path=>{if(path.endsWith('/save'))return saved;throw error(500);},refresh:async()=>{},renderBatches:()=>{},creationProgress:()=>''});
  const fn=source.slice(source.indexOf('async function confirmLyricDraft('),source.indexOf('async function generate('));vm.runInNewContext(fn+';globalThis.result=confirmLyricDraft();',f.context);await assert.rejects(f.context.result);
  assert.equal(f.fields['studio-review-lyrics'].disabled,false);f.fields['studio-review-lyrics'].value='new edit after network error';f.show(saved);assert.equal(f.fields['studio-review-lyrics'].value,'new edit after network error');assert.equal(f.builds(),1);
 });
 await test('lyrics lock during confirmation and a late response never closes another dialog',async()=>{
  let finishSave,closed=0;const nodes={'studio-confirm-lyrics':{},'studio-review-title':{value:'title'},'studio-review-lyrics':{value:'lyrics'},'studio-dialog':{open:true,close:()=>{closed++;}},'studio-lyric-approval':{hidden:false},'studio-create-status':{}};
- const d={id,stage:'ready',version:1,can_confirm:true};const context={draftReview:d,draftReviewKey:'',draftConfirming:false,$:key=>nodes[key],api:async path=>path.endsWith('/save')?new Promise(r=>finishSave=r):{draft:{...d,stage:'confirmed'},batch:{id,candidates:[]}},activeCreationId:null,activeBatchId:null,refresh:async()=>{},renderBatches:()=>{},creationProgress:()=>''};
+ const d={id,stage:'ready',version:1,can_confirm:true};const context={draftReview:d,draftReviewKey:'',draftConfirming:false,$:key=>nodes[key],api:async path=>path.endsWith('/save')?new Promise(r=>finishSave=r):{draft:{...d,stage:'confirmed'},batch:{id,candidates:[]}},activeCreationId:null,activeBatchId:null,generationAutoplay:{arm:()=>{}},refresh:async()=>{},renderBatches:()=>{},creationProgress:()=>''};
  const fn=source.slice(source.indexOf('async function confirmLyricDraft('),source.indexOf('async function generate('));vm.runInNewContext(fn+';globalThis.result=confirmLyricDraft();',context);
  assert.equal(nodes['studio-review-lyrics'].disabled,true);nodes['studio-lyric-approval'].hidden=true;finishSave({...d,version:2,fingerprint:'saved'});await context.result;assert.equal(closed,0);
 });

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {createPlaybackQueue,mixOverviewPeaks,isPlaybackSpace} from './studio-player.js';
+import {createPlaybackQueue,mixOverviewPeaks,isPlaybackSpace,streamNeedsContinuation} from './studio-player.js';
 
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
@@ -81,6 +81,12 @@ await test('IME selection and modified Space shortcuts do not toggle the song',a
  for(const flag of ['isComposing','ctrlKey','metaKey','altKey','repeat','defaultPrevented'])assert.equal(isPlaybackSpace({code:'Space',[flag]:true,target:{closest:()=>null}}),false);
 });
 
+await test('a truncated or still-generating stream must not skip to another song',async()=>{
+ assert.equal(streamNeedsContinuation({status:'stream'},{url:'/song/stream',time:12}),true);
+ assert.equal(streamNeedsContinuation({status:'done',duration_seconds:180},{url:'/song/stream',time:12}),true);
+ assert.equal(streamNeedsContinuation({status:'done',duration_seconds:180},{url:'/song/stream',time:179.9}),false);
+ assert.equal(streamNeedsContinuation({status:'done',duration_seconds:180},{url:'/song/complete',time:12}),false);
+});
 const samples=Float32Array.from({length:400},(_,i)=>Math.sin(i*.4)*.3);
 const buffer=array=>({numberOfChannels:1,length:array.length,getChannelData:()=>array});
 const project={master_gain:.7,tracks:[{id:'a',gain_db:0,muted:false,solo:false},{id:'b',gain_db:0,muted:false,solo:false}]};

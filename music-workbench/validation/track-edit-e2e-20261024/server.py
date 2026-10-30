@@ -535,18 +535,18 @@ class Handler(BaseHTTPRequestHandler):
         match=re.fullmatch(r'/api/generation/jobs/([a-f0-9-]+)',path)
         if match:
             job=WORKFLOW.jobs.get(match[1]);return self.json(200 if job else 404,WORKFLOW.public(job) if job else {'error':'找不到该任务'})
-        match=re.fullmatch(r'/api/generation/media/([a-f0-9-]+)/(stream|complete)',path)
+        match=re.fullmatch(r'/api/generation/media/([a-f0-9-]+)/(stream|complete|preview-complete)',path)
         if match:
             job=WORKFLOW.jobs.get(match[1])
             if not job:return self.json(404,{'error':'找不到该任务'})
-            return STREAM.Handler.send_stream(self,job) if match[2]=='stream' else STREAM.Handler.send_complete(self,job)
+            return STREAM.Handler.send_stream(self,job,kind='preview_complete') if match[2]=='preview-complete' else STREAM.Handler.send_stream(self,job) if match[2]=='stream' else STREAM.Handler.send_complete(self,job)
         if path in ('/','/studio','/studio/'):
             return self.serve(ROOT/'studio.html')
         if path in ('/legacy','/legacy/'):
             return self.serve(ROOT/'index.html')
         if path=='/assets/brand/osmanthus-logo.png':
             return self.serve(ROOT/'assets/brand/osmanthus-logo.png')
-        if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-inspiration.js','/studio-create.js','/studio-creation-request.js'):
+        if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-inspiration.js','/studio-generation-autoplay.js','/studio-create.js','/studio-creation-request.js'):
             return self.serve(ROOT/path[1:])
         if path in ('/','/app.js','/seek-control.js','/score.js','/vocals.js','/svc.js','/voice-library.js','/lyrics.js','/generation.js','/generation.css','/style.css','/interactions.css','/sections.js','/candidate_review.js'):
             return self.serve(ROOT/('index.html' if path=='/' else path[1:]))
