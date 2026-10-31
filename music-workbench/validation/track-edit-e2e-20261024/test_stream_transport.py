@@ -45,7 +45,19 @@ class CompletedDownloadTests(unittest.TestCase):
   return SimpleNamespace(stdout=SimpleNamespace(read1=lambda _:next(chunks)),stderr=io.BytesIO(b'interrupted' if code else b''),wait=lambda **_:code,poll=lambda:code)
  def headers(self,path,status=200,offset=0,total=None,etag='v1'):
   total=total or len(self.data);extra=f'Content-Range: bytes {offset}-{total-1}/{total}\r\n' if status==206 else ''
-  path.write_text(f'HTTP/1.1 {status} OK\r\nContent-Length: {total-offset}\r\nETag: {etag}\r\n{extra}\r\n')
+  # curl writes HTTP wire bytes. Text mode on Windows would turn CRLF into
+  # CRCRLF, manufacturing blank header blocks that real curl does not produce.
+  path.write_bytes(f'HTTP/1.1 {status} OK\r\nContent-Length: {total-offset}\r\nETag: {etag}\r\n{extra}\r\n'.encode('ascii'))
+ def test_header_fixture_preserves_curl_wire_bytes_on_windows(self):
+  # Reproduce Windows text-mode newline translation even on POSIX runners.
+  original=Path.write_text
+  def windows_text(path,value,**kw):
+   kw.setdefault('newline','\r\n');return original(path,value,**kw)
+  file=self.root/'response.headers'
+  with patch.object(Path,'write_text',windows_text):self.headers(file,206,12000)
+  self.assertNotIn(b'\r\r\n',file.read_bytes())
+  self.assertEqual(w.STREAM.response_headers(file),(206,{'content-length':str(len(self.data)-12000),
+   'etag':'v1','content-range':f'bytes 12000-{len(self.data)-1}/{len(self.data)}'}))
  def test_partial_disconnect_resumes_exact_bytes_without_duplication(self):
   offsets=[]
   def fetch(url,**kw):

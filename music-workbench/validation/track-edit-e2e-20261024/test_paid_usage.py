@@ -144,18 +144,35 @@ class PaidUsageTests(unittest.TestCase):
         work = SimpleNamespace(lock=threading.RLock(), running=set(), jobs={}, lyrics=write)
         drafts = GenerationDrafts(SimpleNamespace(workflow=work, batches={}), Path(self.temp.name)/'drafts')
         body = {'brief': 'a calm original pop song', 'style': '中文流行', 'voice': '温暖男声'}
-        try:
-            drafts.start({**body, 'request_id': str(uuid.uuid4())})
-            drafts.start({**body, 'request_id': str(uuid.uuid4())})
-            with self.assertRaises(PaidUsageError): drafts.start({**body, 'request_id': str(uuid.uuid4())})
-            self.assertEqual(len(drafts.drafts), 2)
-            self.assertEqual(len(drafts.running), 2)
-        finally:
-            release.set()
-            import time
-            deadline=time.monotonic()+5
-            while drafts.running and time.monotonic()<deadline: time.sleep(.01)
+        workers, failures = [], []
+        real_thread = threading.Thread
+        def make_worker(*args, **kwargs):
+            target = kwargs.pop('target')
+            def checked_target(*target_args, **target_kwargs):
+                try: target(*target_args, **target_kwargs)
+                except BaseException as error: failures.append(error)
+            worker = real_thread(*args, target=checked_target, **kwargs)
+            workers.append(worker)
+            return worker
+        with patch('generation_drafts.threading.Thread', side_effect=make_worker):
+            try:
+                drafts.start({**body, 'request_id': str(uuid.uuid4())})
+                drafts.start({**body, 'request_id': str(uuid.uuid4())})
+                with self.assertRaises(PaidUsageError): drafts.start({**body, 'request_id': str(uuid.uuid4())})
+                self.assertEqual(len(drafts.drafts), 2)
+                self.assertEqual(len(drafts.running), 2)
+            finally:
+                release.set()
+                # run() removes its running marker before its final disk write.
+                # Wait for actual thread exit before TemporaryDirectory cleanup,
+                # especially on Windows where removing an open file fails.
+                for worker in workers: worker.join(timeout=10)
+                self.assertFalse(any(worker.is_alive() for worker in workers), 'Draft workers did not exit')
+        self.assertEqual(failures, [], 'A draft worker raised after its running marker was removed')
         self.assertEqual(len(drafts.running), 0)
+        for identifier in drafts.drafts:
+            saved = json.loads((drafts.directory/identifier/'state.json').read_text(encoding='utf-8'))
+            self.assertEqual(saved['stage'], 'ready')
 
     def test_assistant_fallback_counts_each_attempt_and_does_not_retry_quota_error(self):
         # Compile the real handler without importing server.py's live project
