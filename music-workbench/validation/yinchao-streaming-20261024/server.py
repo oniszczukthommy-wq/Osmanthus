@@ -122,10 +122,12 @@ def worker(job:dict)->None:
         event(job,'error',message=message)
 
 
-def media_curl(url:str,resolve_media:bool=False):
+def media_curl(url:str,resolve_media:bool=False,*,offset=0,headers_path=None):
     host=urllib.parse.urlparse(url).hostname
     if urllib.parse.urlparse(url).scheme not in ('https','http') or not host:raise ValueError('Invalid provider media URL')
-    args=['curl','--noproxy','*','--no-buffer','--location','--fail','--silent','--show-error','--connect-timeout','10','--max-time','600']
+    args=['curl','--noproxy','*','--http1.1','--no-buffer','--location','--fail','--silent','--show-error','--connect-timeout','5','--max-time','600' if host=='open.yinchaoyongxian.com' else '180']
+    if offset:args+=['--range',str(offset)+'-']
+    if headers_path:args+=['--dump-header',str(headers_path)]
     # A generation stream can legitimately pause between audio chunks. Apply
     # the low-speed watchdog only to completed CDN file transfers.
     if host!='open.yinchaoyongxian.com':args+=['--speed-time','20','--speed-limit','512']
@@ -148,26 +150,105 @@ def media_curl(url:str,resolve_media:bool=False):
     return process
 
 
-def finish_download(job:dict)->None:
-    for attempt in range(3):
-        process=None
+DOWNLOAD_LOCK=threading.RLock()
+DOWNLOADS={}
+
+def stop_media_process(process):
+    if process and process.poll() is None:
+        process.terminate()
+        try:process.wait(timeout=2)
+        except subprocess.TimeoutExpired:process.kill();process.wait(timeout=2)
+
+def response_headers(path):
+    blocks=re.split(r'\r?\n\r?\n',path.read_text(errors='replace'))
+    block=next((b for b in reversed(blocks) if b.startswith('HTTP/')),'')
+    lines=block.splitlines()
+    if not lines:raise RuntimeError('Audio response headers missing')
+    return int(lines[0].split()[1]),{k.strip().lower():v.strip() for line in lines[1:] if ':' in line for k,v in [line.split(':',1)]}
+
+class CompletedDownload:
+    """One upstream transfer, shared by background saving and progressive playback."""
+    def __init__(self,job):
+        self.job=job;self.condition=threading.Condition();self.done=False;self.error=None;self.size=0;self.total=None;self.etag=None
+        self.file=ROOT/'runs'/job['id']/'complete.mp3'
+        self.file.parent.mkdir(parents=True,exist_ok=True)
+        self.partial=self.file.with_name('.complete-'+uuid.uuid4().hex+'.part')
+        self.headers=self.partial.with_suffix('.headers')
+
+    def run(self):
         try:
-            process=media_curl(job['audio_url'],resolve_media=attempt==1)
-            data=process.stdout.read()
-            diagnostic=process.stderr.read(500).decode('utf-8','replace').replace(job['audio_url'],'<media-url>')
-            if process.wait(timeout=10)!=0 or len(data)<10000:raise RuntimeError(diagnostic or 'Final audio download incomplete')
-            (ROOT/'runs'/job['id']/'complete.mp3').write_bytes(data)
-            with LOCK:job['download_ready']=True;job['error']=None;job['download_error']=None
-            event(job,'download_ready')
-            return
+            with self.partial.open('wb') as output:
+                for attempt in range(5):
+                    process=None
+                    try:
+                        process=media_curl(self.job['audio_url'],resolve_media=attempt%2==1,offset=self.size,headers_path=self.headers)
+                        chunk=process.stdout.read1(16384)
+                        if not chunk:
+                            diagnostic=process.stderr.read(500).decode('utf-8','replace').replace(self.job['audio_url'],'<media-url>')
+                            process.wait(timeout=5)
+                            raise RuntimeError(diagnostic or 'Audio connection returned no data')
+                        status,headers=response_headers(self.headers)
+                        if self.size or status==206:
+                            match=re.fullmatch(r'bytes (\d+)-(\d+)/(\d+)',headers.get('content-range',''))
+                            if status!=206 or not match or int(match[1])!=self.size:raise RuntimeError('Audio resume range did not match; partial data was not appended')
+                            total=int(match[3])
+                        elif status==200:
+                            total=int(headers['content-length']) if headers.get('content-length','').isdigit() else None
+                        else:raise RuntimeError('Unexpected audio response status')
+                        if self.total is not None and total!=self.total:raise RuntimeError('Audio length changed during recovery')
+                        if self.etag and headers.get('etag')!=self.etag:raise RuntimeError('Audio content changed during recovery')
+                        self.total=total;self.etag=headers.get('etag')
+                        if not self.size and chunk.lstrip().startswith((b'#EXTM3U',b'<html',b'<!DOCTYPE',b'{')):raise RuntimeError('Response was not an audio file')
+                        while chunk:
+                            output.write(chunk);output.flush()
+                            with self.condition:self.size+=len(chunk);self.condition.notify_all()
+                            chunk=process.stdout.read1(65536)
+                        diagnostic=process.stderr.read(500).decode('utf-8','replace').replace(self.job['audio_url'],'<media-url>')
+                        if process.wait(timeout=5)!=0:raise RuntimeError(diagnostic or 'Audio transfer interrupted')
+                        if self.size<10000 or (self.total is not None and self.size!=self.total):raise RuntimeError('Final audio download incomplete')
+                        break
+                    except Exception as error:
+                        event(self.job,'download_connection_retry',attempt=attempt+1,resume_bytes=self.size)
+                        if attempt==4:raise
+                        time.sleep(.3)
+                    finally:stop_media_process(process)
+            # Publish only after the full response is validated; partial bytes
+            # are available to listeners but never advertised as a saved song.
+            with self.condition:self.partial.replace(self.file)
+            with LOCK:self.job.update(download_ready=True,error=None,download_error=None)
+            event(self.job,'download_ready')
         except Exception as error:
-            event(job,'download_connection_retry',attempt=attempt+1)
-            if attempt==2:
-                with LOCK:job['download_error']=str(error);job['error']=str(error)
-                event(job,'download_failed',message=str(error)[:300])
-            else:time.sleep(1)
+            self.error=str(error)[:500]
+            with LOCK:self.job.update(download_error=self.error,error='歌曲已生成，音频连接暂时中断；请恢复下载，无需重新生成。')
+            event(self.job,'download_failed',message=self.error)
         finally:
-            if process and process.poll() is None:process.terminate()
+            self.headers.unlink(missing_ok=True)
+            with self.condition:self.done=True;self.condition.notify_all()
+
+    def read(self,offset):
+        with self.condition:
+            while offset>=self.size and not self.done:self.condition.wait(timeout=1)
+            if offset<self.size:
+                source=self.partial if self.partial.exists() else self.file
+                with source.open('rb') as file:file.seek(offset);return file.read(min(65536,self.size-offset))
+            if self.error:raise RuntimeError(self.error)
+            return b''
+
+def completed_download(job,*,retry=False):
+    key=str((ROOT/'runs'/job['id']).resolve())
+    with DOWNLOAD_LOCK:
+        state=DOWNLOADS.get(key)
+        if state is None or (retry and state.done and state.error):
+            old=state;state=CompletedDownload(job);DOWNLOADS[key]=state
+            if old:old.partial.unlink(missing_ok=True)
+            threading.Thread(target=state.run,daemon=True).start()
+        return state
+
+def finish_download(job:dict)->None:
+    if job.get('download_ready') and (ROOT/'runs'/job['id']/'complete.mp3').is_file():return
+    state=completed_download(job,retry=True)
+    with state.condition:
+        while not state.done:state.condition.wait(timeout=1)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -217,7 +298,26 @@ class Handler(BaseHTTPRequestHandler):
                     data=source.read(min(65536,remaining));self.wfile.write(data);remaining-=len(data)
         except (BrokenPipeError,ConnectionResetError):pass
 
+    def send_cached_preview(self,job):
+        if (ROOT/'runs'/job['id']/'complete.mp3').is_file():return Handler.send_complete(self,job)
+        state=completed_download(job);sent=False;offset=0
+        try:
+            chunk=state.read(0)
+            if not chunk:raise RuntimeError('Audio was not downloaded')
+            self.send_response(200);self.send_header('Content-Type','audio/mpeg');self.send_header('Transfer-Encoding','chunked');self.send_header('Cache-Control','no-store');self.send_header('Accept-Ranges','none');self.end_headers();sent=True
+            event(job,'preview_complete_proxy_first_byte',provider_status=job['status'])
+            while chunk:
+                self.wfile.write(f'{len(chunk):X}\r\n'.encode('ascii')+chunk+b'\r\n');self.wfile.flush();offset+=len(chunk)
+                chunk=state.read(offset)
+            self.wfile.write(b'0\r\n\r\n');self.wfile.flush()
+        except (BrokenPipeError,ConnectionResetError):event(job,'preview_complete_client_disconnected')
+        except Exception as error:
+            event(job,'preview_complete_proxy_error',message=str(error)[:500])
+            if sent:self.close_connection=True
+            else:self.json(502,{'error':'歌曲音频连接暂时中断，请稍后重试播放。'})
+
     def send_stream(self,job,kind='stream'):
+        if kind!='stream':return Handler.send_cached_preview(self,job)
         url=job.get('pipe_url' if kind=='stream' else 'audio_url')
         if not url:self.json(409,{'error':'歌曲音频地址尚未返回'});return
         sent=False
@@ -262,7 +362,7 @@ class Handler(BaseHTTPRequestHandler):
             if not sent:self.json(502,{'error':str(error)[:500]})
             else:self.close_connection=True
         finally:
-            if process and process.poll() is None:process.terminate()
+            stop_media_process(process)
 
     def do_POST(self):
         origin=self.headers.get('Origin')

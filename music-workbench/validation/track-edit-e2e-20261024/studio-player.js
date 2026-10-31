@@ -76,6 +76,25 @@ export function streamNeedsContinuation(song,{url='',time=0}={}){
  return !(song?.status==='done'&&Number.isFinite(duration)&&duration>0&&time>=duration-.5);
 }
 
+export function previewBufferReady(audio,seconds=8){
+ const at=audio.currentTime||0,duration=audio.duration;
+ const needed=Number.isFinite(duration)?Math.min(seconds,Math.max(0,duration-at-.1)):seconds;
+ for(let i=0;i<audio.buffered.length;i++)if(audio.buffered.start(i)<=at+.15&&audio.buffered.end(i)-at>=needed&&audio.readyState>=2)return true;
+ return false;
+}
+
+// A little headroom prevents each small network pause from interrupting the
+// listener. The bound still permits slow connections to make visible progress.
+export function waitForPreviewBuffer(audio,{allowed=()=>true,seconds=8,maxWait=12000}={}){
+ return new Promise((resolve,reject)=>{
+  let timer;const started=Date.now();
+  function finish(error){clearInterval(timer);audio.removeEventListener('error',failed);error?reject(error):resolve();}
+  function failed(){finish(Error('音频连接中断'));}
+  function check(){if(!allowed())return finish();if(audio.error)return failed();if(previewBufferReady(audio,seconds)||Date.now()-started>=maxWait)finish();}
+  audio.addEventListener('error',failed,{once:true});timer=setInterval(check,100);check();
+ });
+}
+
 function icon(name){return `<i data-lucide="${name}" aria-hidden="true"></i>`;}
 
 export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onShare=null,onCopyShare=null,onExport=null,onDetails=null,onQueue=null,onFavorite=null,onStateChange=null}={}){
@@ -117,7 +136,11 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
  function registerPreviewSong(song){
   if(!song||typeof song.id!=='string'||!song.id)throw Error('歌曲标识无效。');
   registeredSongs.set(song.id,{...registeredSongs.get(song.id),...song});
-  const existing=nativeById(song.id),finished=song.media?.complete||song.media?.preview_complete,continuation=pendingContinuation?.id===song.id&&pendingContinuation.intent===nativeIntent&&!manualPause?pendingContinuation:existing&&(nativeLoading===existing||song.status==='done')&&!manualPause&&finished&&existing.dataset.url?.endsWith('/stream')?{id:song.id,at:existing.currentTime||0,intent:nativeIntent}:null,raw=finished||song.media?.stream;
+  const existing=nativeById(song.id),finished=song.media?.complete||song.media?.preview_complete;
+  // A metadata refresh may register every candidate. Only the active listening
+  // intent owns continuation; finishing another song must never start it.
+  const active=existing&&sourceKind==='preview'&&preview===existing&&!manualPause;
+  const continuation=active&&pendingContinuation?.id===song.id&&pendingContinuation.intent===nativeIntent?pendingContinuation:active&&nativeLoading===existing&&finished&&existing.dataset.url?.endsWith('/stream')?{id:song.id,at:existing.currentTime||0,intent:nativeIntent}:null,raw=finished||song.media?.stream;
   if(!continuation&&existing?.getAttribute('src')&&(!ownedAudio.has(song.id)||!raw||!existing.paused))return existing;
   if(continuation&&(!finished||(continuation.localOnly&&!song.media?.complete)))return existing;
   if(continuation&&song.duration_seconds>0&&continuation.at>=song.duration_seconds-.5){pendingContinuation=null;nativeLoading=null;manualPause=true;return existing;}
@@ -126,7 +149,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   if(url.origin!==location.origin)throw Error('请使用工作台提供的歌曲音频地址。');
   const audio=existing||document.createElement('audio');
   if(!existing){audio.hidden=true;audio.preload='none';audio.dataset.candidate=song.id;audio.dataset.playerOwnedPreview='true';footer.append(audio);ownedAudio.set(song.id,audio);}
-  if(audio.getAttribute('src')!==url.href){lastPlaying=false;const resumeAt=audio.ended?0:audio.currentTime||0;audio.src=url.href;if(resumeAt>0)audio.dataset.playerResumeAt=String(resumeAt);}
+  if(audio.getAttribute('src')!==url.href){if(audio===preview)lastPlaying=false;const resumeAt=audio.ended?0:audio.currentTime||0;audio.src=url.href;if(resumeAt>0)audio.dataset.playerResumeAt=String(resumeAt);}
   audio.dataset.url=raw;if(continuation&&finished){pendingContinuation=null;void safe(()=>playPreview(audio,{at:continuation.at}));}return audio;
  }
  function recordNativeEvent(event){const audio=event.target;if(!audio?.dataset?.candidate)return;const type=event.type;
@@ -163,11 +186,17 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   manualPause=false;pendingMessage='';if(preview&&preview!==audio)preview.pause();preview=audio;sourceKind='preview';controller.pause();
   nativeLoading=audio;paint(true);
   audio.muted=false;audio.volume=engine.transport.state().volume;
+  audio.preload='auto';
+  if(audio.readyState===0)audio.load();
   const resumeAt=at??(audio.dataset.playerResumeAt!==undefined?Number(audio.dataset.playerResumeAt):undefined);delete audio.dataset.playerResumeAt;
   if(resumeAt!==undefined||audio.ended){const value=Math.max(0,Number(resumeAt)||0);try{audio.currentTime=Number.isFinite(audio.duration)?Math.min(audio.duration,value):value;}catch{audio.addEventListener('loadedmetadata',()=>{if(token===nativeIntent)audio.currentTime=Math.min(audio.duration,value);},{once:true});}}
-  try{await audio.play();if(token!==nativeIntent){if(nativeRequests.get(audio)===token)audio.pause();return{superseded:true};}paint(true);return{played:true,project_id:audio.dataset.candidate};}
-  catch(error){if(token!==nativeIntent)return{superseded:true};throw error;}
-  finally{if(nativeRequests.get(audio)===token)nativeRequests.delete(audio);if(token===nativeIntent&&nativeLoading===audio)nativeLoading=null;paint(true);}
+  try{
+   await waitForPreviewBuffer(audio,{allowed:()=>token===nativeIntent});
+   if(token!==nativeIntent)return{superseded:true};
+   await audio.play();if(token!==nativeIntent){if(nativeRequests.get(audio)===token)audio.pause();return{superseded:true};}paint(true);return{played:true,project_id:audio.dataset.candidate};
+  }
+  catch(error){if(token!==nativeIntent)return{superseded:true};if(pendingContinuation?.id===audio.dataset.candidate&&pendingContinuation.intent===token)return{recovering:true};throw Error(error.name==='NotAllowedError'?'点击播放即可开始试听。':'音频连接中断，请重试播放。');}
+  finally{if(nativeRequests.get(audio)===token)nativeRequests.delete(audio);if(token===nativeIntent&&nativeLoading===audio&&!pendingContinuation)nativeLoading=null;paint(true);}
  }
  async function playSong(id,options={}){
   if(!options.automatic)root.dispatchEvent(new CustomEvent('osmanthus:manual-playback',{bubbles:true}));
@@ -243,7 +272,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   if(['ended','error'].includes(event.type)&&!manualPause&&(streamNeedsContinuation(previewSong(preview),{url:preview.dataset.url||'',time:preview.currentTime||0})||(event.type==='error'&&preview.dataset.url?.endsWith('/preview-complete')))){
    const audio=preview,at=audio.currentTime||0;audio.pause();pendingContinuation={id:audio.dataset.candidate,at,intent:nativeIntent,localOnly:audio.dataset.url?.endsWith('/preview-complete')};nativeLoading=audio;lastPlaying=false;const song=songById(audio.dataset.candidate);if(song?.media?.complete||song?.media?.preview_complete)registerPreviewSong(song);paint(true);return;
   }
-  if(['waiting','stalled','loadstart'].includes(event.type)){if(!preview.paused)nativeLoading=preview;}else if(nativeLoading===preview&&!pendingContinuation)nativeLoading=null;paint(true);
+  if(['waiting','stalled','loadstart'].includes(event.type)){if(!preview.paused)nativeLoading=preview;}else if(nativeLoading===preview&&!pendingContinuation&&(event.type==='playing'||!nativeRequests.has(preview)))nativeLoading=null;paint(true);
  }
  const bufferEvents=['waiting','stalled','loadstart','playing','canplay','pause','ended','error'];for(const type of bufferEvents)document.addEventListener(type,onNativeBuffer,true);
  const previousPausePreviews=window.pauseGenerationPreview;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {createPlaybackQueue,mixOverviewPeaks,isPlaybackSpace,streamNeedsContinuation} from './studio-player.js';
+import {createPlaybackQueue,mixOverviewPeaks,isPlaybackSpace,streamNeedsContinuation,previewBufferReady,waitForPreviewBuffer} from './studio-player.js';
 
 const deferred=()=>{let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return{promise,resolve,reject};};
 const turn=()=>new Promise(resolve=>setImmediate(resolve));
@@ -86,6 +86,19 @@ await test('a truncated or still-generating stream must not skip to another song
  assert.equal(streamNeedsContinuation({status:'done',duration_seconds:180},{url:'/song/stream',time:12}),true);
  assert.equal(streamNeedsContinuation({status:'done',duration_seconds:180},{url:'/song/stream',time:179.9}),false);
  assert.equal(streamNeedsContinuation({status:'done',duration_seconds:180},{url:'/song/complete',time:12}),false);
+});
+await test('preview needs headroom at the current play position, not a later buffered range',async()=>{
+ const audio={currentTime:12,duration:Infinity,readyState:3,buffered:{length:2,start:i=>[0,30][i],end:i=>[14,45][i]}};
+ assert.equal(previewBufferReady(audio),false);audio.buffered.end=i=>[21,45][i];assert.equal(previewBufferReady(audio),true);
+ audio.duration=14;audio.buffered.end=i=>[14,45][i];assert.equal(previewBufferReady(audio),true);
+});
+await test('prebuffer can be cancelled and a short remaining tail need not wait eight seconds',async()=>{
+ const audio=new EventTarget();Object.assign(audio,{currentTime:9,duration:10,readyState:3,buffered:{length:1,start:()=>0,end:()=>10}});
+ await waitForPreviewBuffer(audio,{maxWait:500});audio.buffered={length:0};await waitForPreviewBuffer(audio,{allowed:()=>false,maxWait:500});
+});
+await test('prebuffer propagates a real loading failure for continuation recovery',async()=>{
+ const audio=new EventTarget();Object.assign(audio,{currentTime:0,duration:Infinity,readyState:0,buffered:{length:0}});
+ const loading=waitForPreviewBuffer(audio);audio.dispatchEvent(new Event('error'));await assert.rejects(loading,/音频连接中断/);
 });
 const samples=Float32Array.from({length:400},(_,i)=>Math.sin(i*.4)*.3);
 const buffer=array=>({numberOfChannels:1,length:array.length,getChannelData:()=>array});
