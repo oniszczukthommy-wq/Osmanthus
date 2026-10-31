@@ -74,7 +74,8 @@ else:
 
         @staticmethod
         def flock(handle, flags):
-            if flags & portalocker.LOCK_UN:
+            # Windows uses 0 for LK_UNLCK; bitwise detection never matches it.
+            if flags == portalocker.LOCK_UN:
                 return portalocker.unlock(handle)
             try:
                 return portalocker.lock(handle, flags)
