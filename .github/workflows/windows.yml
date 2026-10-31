@@ -1,7 +1,7 @@
 name: Windows and portable startup
 on:
   push:
-    branches: [main, 'codex/windows-support', 'codex/priority-safety-fixes']
+    branches: [main, 'codex/**']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -13,7 +13,7 @@ jobs:
       matrix:
         os: [windows-2022, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 25
     env:
       MV_DISABLE_MODELS: '1'
       PYTHONUTF8: '1'
@@ -48,13 +48,12 @@ jobs:
         run: python -X utf8 tests/test_portable_startup.py
       - name: Paid music limits, task recovery and confined media downloads
         working-directory: music-workbench/validation/track-edit-e2e-20261024
-        run: python -X utf8 -m unittest -v test_generation_pairs test_workflow_recovery test_generation_drafts test_lyric_retry test_paid_usage test_media_paths
-      - name: Paid MV text limits and real HTTP regressions (mocked providers)
+        run: python -X utf8 -m unittest -v test_generation_pairs test_workflow_recovery test_generation_drafts test_create_flow test_creation_http_routes test_generated_lyrics test_lyric_retry test_paid_usage test_artwork test_artwork_workflow test_inspiration test_stream_transport test_media_paths test_local_access test_project_storage test_project
+      - name: MV core, budgets, recovery, conflicts, HTTP and real media regression (mocked providers)
         working-directory: mv-studio
-        run: node --test --test-concurrency=1 test/text-usage.test.mjs test/paid-http.test.mjs test/server.test.mjs
-      - name: MV media and subtitle export with real FFmpeg (mocked model responses)
-        working-directory: mv-studio
-        run: node --test --test-concurrency=1 test/runtime-config.test.mjs test/subtitle-fonts.test.mjs test/canvas-video-editor.test.mjs test/music-bridge.test.mjs test/mv-director.test.mjs
+        run: node --test --test-concurrency=1 test/*.test.mjs
+      - name: Authenticated friend gateway and streaming proxy
+        run: node --test music-workbench/tools/test_osmanthus_share_gateway.mjs
       - name: Validate Windows setup script and optional audio tool imports
         if: runner.os == 'Windows'
         shell: powershell

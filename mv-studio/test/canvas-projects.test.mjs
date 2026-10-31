@@ -25,11 +25,35 @@ function sandbox(t, options = {}) {
   return {data, folder: path.join(data, 'canvas-projects'), store: createCanvasProjects({data, ...options})};
 }
 
+test('两个标签页的旧快照不能覆盖新编辑，重命名和归档也检查版本', t => {
+  const {store} = sandbox(t), first = store.save(project());
+  const tabA = structuredClone(first.project), tabB = structuredClone(first.project);
+  tabA.studio.prompt = 'A已经保存的新内容';
+  const current = store.save(tabA);
+  tabB.title = 'B的旧快照';
+  assert.throws(() => store.save(tabB), error => error.status === 409 && error.code === 'CANVAS_CONFLICT');
+  assert.equal(store.get(tabA.id).project.studio.prompt, 'A已经保存的新内容');
+  assert.throws(() => store.rename(tabA.id, '旧页改名', {revision:first.revision}), error => error.code === 'CANVAS_CONFLICT');
+  assert.throws(() => store.archive(tabA.id, {revision:first.revision}), error => error.code === 'CANVAS_CONFLICT');
+  const renamed=store.rename(tabA.id, '新名称', {revision:current.revision});
+  const archived=store.archive(tabA.id, {revision:renamed.revision});
+  assert.throws(() => store.restore(tabA.id, {revision:renamed.revision}), error => error.code === 'CANVAS_CONFLICT');
+  assert.equal(store.restore(tabA.id, {revision:archived.revision}).project.title, '新名称');
+});
+
+test('历史记录以版本0加载，首次更新后旧标签页仍需重新获取版本', t => {
+  const {store,folder}=sandbox(t), input=project(), now=new Date().toISOString();
+  fs.writeFileSync(path.join(folder,input.id+'.json'),JSON.stringify({schema:'osmanthus-canvas-project-v1',id:input.id,project:input,createdAt:now,updatedAt:now,archivedAt:null,sha256:crypto.createHash('sha256').update(JSON.stringify(input)).digest('hex')}));
+  const old=store.get(input.id);assert.equal(old.revision,0);assert.equal(old.project.canvasRevision,0);
+  const next=store.save({...old.project,title:'升级后的画布'});assert.equal(next.revision,1);
+  assert.throws(()=>store.save({...input,title:'没有版本的旧页面'}),error=>error.code==='CANVAS_CONFLICT');
+});
+
 test('保存完整项目、轻量目录摘要、独立读取和重启查找', t => {
   const {store, data, folder} = sandbox(t), input = project();
   const before = JSON.stringify(input), record = store.save(input);
   assert.equal(JSON.stringify(input), before);
-  assert.deepEqual(record.project, input);
+  assert.deepEqual(record.project, {...input,canvasRevision:1});
   assert.equal(record.id, input.id);
   assert.equal(record.archivedAt, null);
   assert.equal(record.createdAt, record.updatedAt);
@@ -43,14 +67,15 @@ test('保存完整项目、轻量目录摘要、独立读取和重启查找', t 
   assert.equal(summary.musicTitle, input.source.name);
   record.project.studio.canvas.nodes[0].x = 999;
   assert.equal(store.get(input.id).project.studio.canvas.nodes[0].x, 80);
-  assert.deepEqual(createCanvasProjects({data}).get(input.id).project, input);
+  assert.deepEqual(createCanvasProjects({data}).get(input.id).project, {...input,canvasRevision:1});
   assert.deepEqual(fs.readdirSync(folder), [input.id + '.json']);
   input.studio.prompt = '修改后的创作要求';
+  input.canvasRevision = record.revision;
   const updated = store.save(input);
   assert.equal(updated.createdAt, record.createdAt);
   assert(updated.updatedAt > record.updatedAt);
   assert.equal(updated.project.studio.prompt, input.studio.prompt);
-  const renamed = store.rename(input.id, '  新名称  ');
+  const renamed = store.rename(input.id, '  新名称  ', {revision:updated.revision});
   assert.equal(renamed.project.title, '新名称');
   assert.equal(renamed.project.studio.prompt, input.studio.prompt);
   assert(renamed.updatedAt > updated.updatedAt);
@@ -87,25 +112,25 @@ test('副本新ID且解除handoff，保留来源快照、画布、原音频与�
 test('归档/恢复分开展示；归档拒绝旧页面保存，且不会删除项目或媒体', t => {
   const {store, data, folder} = sandbox(t), input = project();
   fs.mkdirSync(path.join(data, 'uploads')); fs.writeFileSync(path.join(data, 'uploads', 'keep.wav'), 'keep');
-  const saved = store.save(input), archived = store.archive(input.id);
+  const saved = store.save(input), archived = store.archive(input.id, {revision:saved.revision});
   assert(archived.archivedAt);
   assert(archived.updatedAt > saved.updatedAt);
   assert.deepEqual(store.list(), []);
   assert.equal(store.list({archived: true})[0].id, input.id);
   assert.equal(store.get(input.id), null);
   assert.deepEqual(store.get(input.id, {includeArchived: true}), archived);
-  assert.deepEqual(store.archive(input.id), archived);
+  assert.deepEqual(store.archive(input.id, {revision:archived.revision}), archived);
   for (const operation of [() => store.save(input), () => store.rename(input.id, '旧页面修改'), () => store.duplicate(input.id)]) {
     assert.throws(operation, error => error.status === 409);
   }
   assert.deepEqual(fs.readdirSync(folder), [input.id + '.json']);
-  const restored = store.restore(input.id);
+  const restored = store.restore(input.id, {revision:archived.revision});
   assert.equal(restored.archivedAt, null);
   assert(restored.updatedAt > archived.updatedAt);
-  assert.deepEqual(restored.project, input);
+  assert.deepEqual(restored.project, {...input,canvasRevision:restored.revision});
   assert.equal(store.list().length, 1);
   assert.deepEqual(store.list({archived: true}), []);
-  assert.deepEqual(store.restore(input.id), restored);
+  assert.deepEqual(store.restore(input.id, {revision:restored.revision}), restored);
   assert.equal(fs.readFileSync(path.join(data, 'uploads', 'keep.wav'), 'utf8'), 'keep');
 });
 
@@ -161,13 +186,13 @@ test('原子保存：写入器只接收临时文件；写入异常与错误内�
   const first = store.save(input), bytes = fs.readFileSync(final);
   for (const mode of ['throw', 'wrong']) {
     behavior = mode;
-    assert.throws(() => store.save({...input, title: '尝试新名称'}));
+    assert.throws(() => store.save({...first.project, title: '尝试新名称'}));
     assert(fs.readFileSync(final).equals(bytes));
     assert.deepEqual(store.get(input.id), first);
     assert.deepEqual(fs.readdirSync(folder), [input.id + '.json']);
   }
   behavior = 'ok';
-  const next = store.rename(input.id, '原子更新完成');
+  const next = store.rename(input.id, '原子更新完成', {revision:first.revision});
   assert.equal(observedOldTitle, '原始名称');
   assert.equal(next.project.title, '原子更新完成');
   assert.equal(store.get(input.id).project.title, '原子更新完成');

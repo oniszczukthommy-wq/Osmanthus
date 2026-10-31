@@ -59,7 +59,7 @@ export function createAIMVWorkflow({data,planner,video,audioPath,probe,ffmpeg,po
   filters.push(`${labels}concat=n=${j.shots.length}:v=1:a=0[outv]`);
   const target=path.join(outFolder,'mv.mp4');
   await run(ffmpeg,['-v','error','-y',...inputs,'-ss',String(j.plan.start),'-i',j.audioFile,'-filter_complex',filters.join(';'),'-map','[outv]','-map',`${j.shots.length}:a:0`,'-t',String(j.plan.duration),'-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart',target]);
-  const info=probe(target),v=info.streams?.find(x=>x.codec_type==='video'),a=info.streams?.find(x=>x.codec_type==='audio');
+  const info=await probe(target),v=info.streams?.find(x=>x.codec_type==='video'),a=info.streams?.find(x=>x.codec_type==='audio');
   if(!v||!a||v.width!==format.width||v.height!==format.height||Math.abs(Number(info.format?.duration)-j.plan.duration)>.2)throw error('成片的时长、声音或画面尺寸检查未通过');
   j.generated={url:`/files/jobs/${j.id}/mv.mp4`,sha256:hash(fs.readFileSync(target)),duration:j.plan.duration,dimensions:format,provider:'aliyun-wan',kind:'ai-generated-mv',jobId:j.id,source_sha256:j.plan.source_sha256};
   j.status='ready';j.progress=100;j.message='AI镜头与原歌曲已合成，可试听与下载';save(j);

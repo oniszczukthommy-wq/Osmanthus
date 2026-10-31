@@ -56,14 +56,14 @@ export function createCanvasGeneration({data,image,video,imageVideo,speech,promp
     if(!frame){j.message='正在生成视频首帧';save(j);const compiledFrame=await prompts.compile({request_id:child(id,'keyframe-prompt'),kind:'image',max_chars:1100,prompt:'生成一张视频开场关键帧，表现以下创意的起始画面，不要时间轴或分镜拼图：'+j.compiledPrompt});frame=await image.submit({request_id:keyframeId,prompt:compiledFrame.prompt,ratio:j.ratio});}
     if(!TERMINAL.has(state(frame))&&image.refresh)frame=await image.refresh(keyframeId);
     if(pending(j,frame,'视频首帧'))return;
-    if(!j.keyframe||!materials.asset(j.keyframe.id)){const asset=image.asset(keyframeId);if(!asset)throw error('首帧文件校验未通过');j.keyframe=materials.upload(`视频首帧-${id.slice(0,8)}.png`,fs.readFileSync(asset.file));save(j);}await ensureVideoFrame(j,j.keyframe);
+    if(!j.keyframe||!materials.asset(j.keyframe.id)){const asset=image.asset(keyframeId);if(!asset)throw error('首帧文件校验未通过');j.keyframe=await materials.upload(`视频首帧-${id.slice(0,8)}.png`,fs.readFileSync(asset.file));save(j);}await ensureVideoFrame(j,j.keyframe);
    }
    const adapter=provider(j);if(!adapter)throw error('生成模型尚未配置',503);let result=adapter.get(id);
    if(!result){j.status='generating';j.message='正在生成'+({image:'图片',video:'视频',speech:'语音'})[j.kind];save(j);result=await adapter.submit(j.kind==='image'?{request_id:id,prompt:j.compiledPrompt,ratio:j.ratio,references:j.references.map(material_id=>({material_id}))}:j.kind==='speech'?{request_id:id,text:j.prompt,voice:j.voice,language_type:'Chinese'}:{request_id:id,prompt:j.compiledPrompt,duration:j.duration,ratio:j.ratio,...(j.imageMaterial?{image:{material_id:j.imageMaterial}}:{})});}
    if(!TERMINAL.has(state(result))&&adapter.refresh)result=await adapter.refresh(id);
    j.provider=result.model;j.providerStatus=result.status;j.estimatedCostCny=result.estimatedCostCny;
    if(pending(j,result,'媒体'))return;
-   j.material=register(j,adapter,result);j.status='ready';j.message='生成完成，已保存在素材库';j.url=j.material.url;save(j);
+   j.material=await register(j,adapter,result);j.status='ready';j.message='生成完成，已保存在素材库';j.url=j.material.url;save(j);
   }catch(e){j.status=e.retryBlocked||e.uncertain?'uncertain':'failed';j.retryBlocked=j.status==='uncertain';j.error=String(e.message).slice(0,240);j.message=j.error;save(j);}finally{running.delete(id);}
  }
  function submit(raw){

@@ -6,6 +6,8 @@ import urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from media_paths import media_file
+from preview_cache import open_media
+from local_access import local_request_allowed
 from paid_usage import paid_call, PaidUsageError
 from urllib.parse import unquote, urlparse
 import numpy as np
@@ -375,6 +377,14 @@ def assistant(body):
             'model_seconds':round(time.perf_counter()-started,3),'usage':response.get('usage')}
 
 class Handler(BaseHTTPRequestHandler):
+    def parse_request(self):
+        if not super().parse_request():return False
+        if not local_request_allowed(self.headers,self.server.server_port,self.requestline.split()[1]):
+            self.close_connection=True
+            self.send_error(403,'Please use the local Osmanthus address')
+            return False
+        return True
+
     protocol_version='HTTP/1.1'
 
     def log_message(self, fmt, *args): print('[track-editor] '+fmt%args,flush=True)
@@ -386,8 +396,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers();self.wfile.write(data)
 
     def serve(self,path):
-        if not path.is_file(): return self.json(404,{'error':'文件不存在'})
-        with path.open('rb') as f:
+        with open_media(path) as f:
+            if f is None:return self.json(404,{'error':'文件不存在'})
             size=os.fstat(f.fileno()).st_size;start=0;end=size-1;status=200
             range_header=self.headers.get('Range')
             if range_header:
@@ -573,22 +583,15 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(405);self.send_header('Content-Length','0');self.end_headers()
 
     def do_PUT(self):
-        origin=self.headers.get('Origin')
-        if origin and origin not in (f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}'):return self.json(403,{'error':'仅接受本机页面请求'})
         if urlparse(self.path).path.startswith('/mv/'):return proxy_mv(self,MV_PORT)
         return self.json(405,{'error':'接口不支持PUT'})
 
     def do_DELETE(self):
-        origin=self.headers.get('Origin')
-        if origin and origin not in (f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}'):return self.json(403,{'error':'仅接受本机页面请求'})
         if urlparse(self.path).path.startswith('/mv/'):return proxy_mv(self,MV_PORT)
         return self.json(405,{'error':'接口不支持DELETE'})
 
     def do_POST(self):
         global PROJECT
-        origin=self.headers.get('Origin')
-        if origin and origin not in (f'http://127.0.0.1:{PORT}',f'http://localhost:{PORT}'):
-            return self.json(403,{'error':'仅接受本机编辑页面请求'})
         if urlparse(self.path).path.startswith('/mv/'):return proxy_mv(self,MV_PORT)
         try:
             length=int(self.headers.get('Content-Length',0))

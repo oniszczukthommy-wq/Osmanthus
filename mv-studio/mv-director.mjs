@@ -108,7 +108,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
       if(['generated','download_failed','downloading','downloaded'].includes(result.status))result=await image.refresh(imageId);
       if(result.status!=='ready')throw Object.assign(fail(result.error?.message||'方案图片尚未完成，已有图片已保留',409),{uncertain:['uncertain','submitting'].includes(result.status)});
       const asset=image.asset(imageId);if(!asset)throw fail('方案图片完整性校验未通过');
-      const material=materials.upload(`MV-${item.id}-${imageId}.png`,fs.readFileSync(asset.file));
+      const material=await materials.upload(`MV-${item.id}-${imageId}.png`,fs.readFileSync(asset.file));
       s.previews[item.id]={signature,imageId,url:result.url,materialId:material.id};saveSession(s);
     }
   }
@@ -131,7 +131,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
       args.push('-vf',filters.join(','),'-c:v','libx264','-preset','fast','-crf','20');
     }else args.push('-c:v','copy');
     args.push('-c:a','aac','-b:a','192k','-movflags','+faststart',output);await run(ffmpeg,args,{timeout:600000,cwd:directory});
-    const info=probe(output),v=info.streams?.find(x=>x.codec_type==='video'),a=info.streams?.find(x=>x.codec_type==='audio');
+    const info=await probe(output),v=info.streams?.find(x=>x.codec_type==='video'),a=info.streams?.find(x=>x.codec_type==='audio');
     if(!v||!a||v.width!==format.width||v.height!==format.height||Math.abs(Number(info.format.duration)-s.range.duration)>.15)throw fail('成片时长或音画轨道校验未通过');
     const result={id:j.id,url:`/files/mv-director/${j.id}/mv.mp4`,duration:s.range.duration,sha256:hash(fs.readFileSync(output)),source_sha256:s.source_sha256,revision:s.revision,subtitles:!!j.input.subtitles,createdAt:new Date().toISOString()};
     s.outputs.push(result);s.generated=result;saveSession(s);

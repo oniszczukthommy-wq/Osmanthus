@@ -72,7 +72,8 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
     return (await response.json()).material;
   };
   const readProject = id => request(`/api/canvas-projects/${id}`, undefined, 'GET');
-  let image, audio, clip, project, selectedMusic;
+  let image, audio, clip, project, selectedMusic, localSource;
+  const localProject=()=>{const p=resizePlan(makeProject(),3,0);p.source=structuredClone(localSource);p.lyrics=[];return p;};
   try {
     await t.test('模型关闭；上传验证、材料列表和GET/HEAD/Range文件流保持源校验', async () => {
       const cap = await request('/api/capabilities', undefined, 'GET');
@@ -83,6 +84,8 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
       clip = await upload('动作参考.mp4', video);
       assert.deepEqual([image.kind, audio.kind, clip.kind], ['image', 'audio', 'video']);
       assert.equal((await request('/api/materials', undefined, 'GET')).data.materials.length, 3);
+      const sourceResponse=await fetch(base+'/api/upload',{method:'POST',headers:{'x-filename':'fixture.wav'},body:fs.readFileSync(wav)});
+      assert.equal(sourceResponse.status,201);localSource=(await sourceResponse.json()).source;
       assert.deepEqual((await request(`/api/materials/${image.id}`, undefined, 'GET')).data.material, image);
       const head = await fetch(base + image.url, {method: 'HEAD'});
       assert.equal(head.status, 200); assert.equal(head.headers.get('content-type'), 'image/png');
@@ -105,21 +108,22 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
     });
 
     await t.test('旧draft保存仍可用；创建、保存、重命名、打开、复制和归档恢复目录', async () => {
-      const legacy = await request('/api/project', makeProject(), 'PUT');
+      const legacy = await request('/api/project', localProject(), 'PUT');
       assert.equal(legacy.status, 200); assert.equal(legacy.data.saved, true);
       assert.notEqual(legacy.data.project.id, 'draft');
-      const again = await request('/api/project', makeProject(), 'PUT');
+      const again = await request('/api/project', legacy.data.project, 'PUT');
       assert.equal(again.data.project.id, legacy.data.project.id);
-      project = resizePlan(makeProject(), 3, 0);
+      project = localProject();
       project.id = crypto.randomUUID(); project.title = '完整材料画布';
       project.studio = {ratio: '4:3', freeCanvas: true, canvas: addNode(createCanvasDocument(),
         {id: 'reference', type: 'image', asset: {id: image.id, url: image.url, name: image.name}})};
       let response = await request('/api/canvas-projects', {project});
       assert.equal(response.status, 201); assert.equal(response.data.project.id, project.id);
+      project = response.data.project;
       assert.equal((await request('/api/project', project)).status, 200, 'pagehide beacon uses validated POST save');
       assert.equal(response.data.record.project.studio.canvas.nodes.length, 1);
       assert.equal((await request('/api/canvas-projects', undefined, 'GET')).data.projects.length, 2);
-      response = await request(`/api/canvas-projects/${project.id}/rename`, {title: '  改名画布  '});
+      response = await request(`/api/canvas-projects/${project.id}/rename`, {title: '  改名画布  ',revision:project.canvasRevision});
       assert.equal(response.status, 200); project = response.data.project;
       assert.equal(project.title, '改名画布');
       assert.equal((await request('/api/project', undefined, 'GET')).data.project.title, project.title);
@@ -129,13 +133,14 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
       assert.equal((await request('/api/project', undefined, 'GET')).data.project.id, project.id);
       assert.equal((await request(`/api/canvas-projects/${copy.data.project.id}/open`, {})).data.project.title, '独立副本');
       assert.equal((await request(`/api/canvas-projects/${project.id}/open`, {})).status, 200);
-      assert.equal((await request(`/api/canvas-projects/${copy.data.project.id}/archive`, {})).status, 200);
+      const archivedCopy=await request(`/api/canvas-projects/${copy.data.project.id}/archive`, {revision:copy.data.record.revision});
+      assert.equal(archivedCopy.status, 200);
       assert.equal((await request('/api/canvas-projects?archived=1', undefined, 'GET')).data.projects[0].id, copy.data.project.id);
       assert.equal((await readProject(copy.data.project.id)).status, 409);
       assert.equal((await request(`/api/canvas-projects/${copy.data.project.id}?archived=1`, undefined, 'GET')).status, 200);
       assert.equal((await request(`/api/canvas-projects/${copy.data.project.id}/open`, {})).status, 409);
       assert.equal((await request('/api/project', copy.data.project, 'PUT')).status, 409);
-      assert.equal((await request(`/api/canvas-projects/${copy.data.project.id}/restore`, {})).status, 200);
+      assert.equal((await request(`/api/canvas-projects/${copy.data.project.id}/restore`, {revision:archivedCopy.data.record.revision})).status, 200);
       assert.equal((await readProject(copy.data.project.id)).status, 200);
       const bad = structuredClone(project); bad.studio.ratio = '99:1';
       assert.equal((await request('/api/project', bad, 'PUT')).status, 400);
@@ -154,6 +159,40 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
       assert.deepEqual(imported.data.project.studio.canvas, project.studio.canvas);
     });
 
+    await t.test('A/B页面保存冲突拒绝且可另存本地副本；打开页面不会使版本失效', async () => {
+      const original=(await readProject(project.id)).data.project;
+      const a=structuredClone(original),b=structuredClone(original);
+      a.studio.prompt='A标签保存的新内容';
+      const saved=await request('/api/project',a,'PUT');assert.equal(saved.status,200);
+      b.title='B标签未保存内容';
+      for(const method of ['PUT','POST']){
+        const rejected=await request('/api/project',b,method);assert.equal(rejected.status,409);assert.equal(rejected.data.code,'CANVAS_CONFLICT');
+      }
+      assert.equal((await request('/api/canvas-projects',{project:b})).status,409);
+      assert.equal((await request(`/api/canvas-projects/${project.id}/rename`,{title:'旧页改名',revision:original.canvasRevision})).status,409);
+      assert.equal((await request(`/api/canvas-projects/${project.id}/archive`,{revision:original.canvasRevision})).status,409);
+      const opened=await request(`/api/canvas-projects/${project.id}/open`,{});
+      assert.equal(opened.data.record.revision,saved.data.record.revision);
+      assert.equal(opened.data.project.studio.prompt,a.studio.prompt);
+      const copy=await request('/api/canvas-projects/import',{project:b});assert.equal(copy.status,201);
+      assert.notEqual(copy.data.project.id,project.id);assert.equal(copy.data.project.title,b.title);
+      assert.equal((await readProject(project.id)).data.project.studio.prompt,a.studio.prompt);
+      project=opened.data.project;
+    });
+
+    await t.test('没有内置示例音频时仍能创建和编辑空白画布，选真实音乐后再制作', async () => {
+      const blank=makeProject();blank.id=crypto.randomUUID();blank.studio={freeCanvas:true,type:'canvas',canvas:createCanvasDocument()};
+      const created=await request('/api/canvas-projects',{project:blank});assert.equal(created.status,201);
+      const edit={...created.data.project,title:'空白画布编辑'};
+      const saved=await request('/api/project',edit,'PUT');assert.equal(saved.status,200);
+      const renamed=await request(`/api/canvas-projects/${blank.id}/rename`,{title:'空白改名',revision:saved.data.record.revision});assert.equal(renamed.status,200);
+      assert.equal((await request(`/api/canvas-projects/${blank.id}/open`,{})).status,200);
+      assert.equal((await request('/api/versions',{project:renamed.data.project,label:'上传音乐前'})).status,201);
+      assert.equal((await request('/api/render',{project:renamed.data.project})).status,400);
+      const withMusic=await request(`/api/materials/${audio.id}/use-audio`,{project:renamed.data.project});assert.equal(withMusic.status,200);
+      assert.notEqual(withMusic.data.project.source.id,'sample');
+    });
+
     await t.test('工程、归档和版本引用阻止删除；未引用副本可删除；音频选择创建独立MV源', async () => {
       assert.equal((await request(`/api/materials/${image.id}`, undefined, 'DELETE')).status, 409);
       assert.equal((await request('/api/versions', {project, label: '保留材料引用'})).status, 201);
@@ -161,7 +200,7 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
       assert.equal((await fetch(base + clip.url)).status, 404);
       assert.equal((await request(`/api/materials/${clip.id}`, undefined, 'DELETE')).status, 404);
       assert.equal((await request(`/api/materials/${image.id}/use-audio`, {project})).status, 400);
-      assert.equal((await request('/api/render', {project})).status, 400, 'free canvas must choose music first');
+      assert.equal((await request('/api/render', {project:{...project,source:makeProject().source}})).status, 400, 'empty free canvas must choose real music first');
       const response = await request(`/api/materials/${audio.id}/use-audio`, {project});
       assert.equal(response.status, 200); selectedMusic = response.data.project;
       assert.notEqual(selectedMusic.id, project.id);
@@ -184,10 +223,10 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
       assert.equal((await request('/api/versions', {project: snapshot, label: '仅历史引用'})).status, 201);
       assert.equal((await request(`/api/materials/${historical.id}`, undefined, 'DELETE')).status, 409);
       const archived = await upload('归档独有.png', png);
-      const archivedProject = structuredClone(selectedMusic); archivedProject.id = crypto.randomUUID();
+      const archivedProject = structuredClone(selectedMusic); archivedProject.id = crypto.randomUUID();delete archivedProject.canvasRevision;
       archivedProject.studio.canvas = addNode(createCanvasDocument(), {type: 'image', asset: {id: archived.id, url: archived.url}});
-      assert.equal((await request('/api/canvas-projects', {project: archivedProject})).status, 201);
-      await request(`/api/canvas-projects/${archivedProject.id}/archive`, {});
+      const archivedSaved=await request('/api/canvas-projects', {project: archivedProject});assert.equal(archivedSaved.status, 201);
+      await request(`/api/canvas-projects/${archivedProject.id}/archive`, {revision:archivedSaved.data.record.revision});
       await request(`/api/canvas-projects/${selectedMusic.id}/open`, {});
       assert.equal((await request(`/api/materials/${archived.id}`, undefined, 'DELETE')).status, 409);
     });
@@ -203,7 +242,7 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
         assert.equal((await request(`/api/jobs/${job.id}/cancel`, {})).status, 200);
       }
       selectedMusic.studio.ratio = '9:16';
-      assert.equal((await request('/api/project', selectedMusic, 'PUT')).status, 200);
+      const portraitSaved=await request('/api/project', selectedMusic, 'PUT');assert.equal(portraitSaved.status, 200);selectedMusic=portraitSaved.data.project;
       const frame = path.join(fixture, 'portrait.jpg');
       encode(['-f', 'lavfi', '-i', 'color=c=0x263e4f:s=720x1280', '-frames:v', '1', frame]);
       const bytes = fs.readFileSync(frame), start = await request('/api/render', {project: selectedMusic});
@@ -249,20 +288,50 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
       assert.equal((await readProject(selectedMusic.id)).data.project.generated.url, finished.url);
     });
 
+    await t.test('后台成片完成不覆盖另一标签的新编辑，成片仍可下载并保留历史', async () => {
+      const before=(await readProject(selectedMusic.id)).data.project;
+      const start=await request('/api/render',{project:before});assert.equal(start.status,201);
+      const bytes=fs.readFileSync(path.join(fixture,'portrait.jpg')),job=start.data;
+      for(let index=0;index<job.total;index++){
+        const response=await fetch(base+`/api/jobs/${job.id}/frame?index=${index}`,{method:'POST',body:bytes});assert.equal(response.status,200);await response.arrayBuffer();
+      }
+      const changed={...before,title:'另一标签在生成期间保存的名称'};
+      const edited=await request('/api/project',changed,'PUT');assert.equal(edited.status,200);
+      await request(`/api/jobs/${job.id}/finish`,{});
+      let finished;
+      for(let attempt=0;attempt<100;attempt++){
+        finished=(await request(`/api/jobs/${job.id}`,undefined,'GET')).data;
+        if(['ready','failed'].includes(finished.status))break;
+        await new Promise(resolve=>setTimeout(resolve,100));
+      }
+      assert.equal(finished.status,'ready',finished.error);assert.equal(finished.saveConflict,true);
+      assert.equal((await fetch(base+finished.url,{method:'HEAD'})).status,200);
+      const latest=(await readProject(selectedMusic.id)).data.project;
+      assert.equal(latest.title,changed.title);assert.equal(latest.canvasRevision,edited.data.record.revision);
+      assert.equal(latest.generated.url,before.generated.url);
+      const history=(await request('/api/versions',undefined,'GET')).data.versions;
+      assert(history.some(version=>version.id===finished.versionId&&version.output?.url===finished.url));
+      selectedMusic=latest;
+    });
+
     await t.test('歌曲导入登记、恢复编辑、改名和复制保持handoff隔离与音频hash约束', async () => {
       let response = await request('/api/music-import', {handoff_id: handoffId});
       assert.equal(response.status, 200); assert.equal(response.data.reused, false);
-      const imported = response.data.project;
+      let imported = response.data.project;
       assert.equal(musicCalls, 2); assert.equal(imported.musicHandoff.project_id, songProjectId);
       assert.equal((await readProject(imported.id)).status, 200);
       imported.title = '歌曲画布编辑'; imported.studio.ratio = '1:1';
-      assert.equal((await request('/api/project', imported, 'PUT')).status, 200);
+      const importedSaved=await request('/api/project', imported, 'PUT');assert.equal(importedSaved.status, 200);imported=importedSaved.data.project;
       const cache = path.join(data, 'music-projects', handoffId + '.json');
       assert.equal(json(cache).title, imported.title);
       await request(`/api/canvas-projects/${selectedMusic.id}/open`, {});
-      response = await request(`/api/canvas-projects/${imported.id}/rename`, {title: '保留的关联新名'});
+      const oldCache=json(cache);
+      response = await request(`/api/canvas-projects/${imported.id}/rename`, {title: '保留的关联新名',revision:imported.canvasRevision});
       assert.equal(response.status, 200); assert.equal(json(cache).title, '保留的关联新名');
       assert.equal((await request('/api/project', undefined, 'GET')).data.project.id, selectedMusic.id);
+      // Simulate a crash leaving a stale secondary handoff cache after the
+      // canonical catalogue has committed. Import must activate the latest.
+      fs.writeFileSync(cache,JSON.stringify(oldCache));
       response = await request('/api/music-import', {handoff_id: handoffId});
       assert.equal(response.data.reused, true); assert.equal(musicCalls, 2);
       assert.equal(response.data.project.title, '保留的关联新名');

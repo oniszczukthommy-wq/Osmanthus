@@ -5,14 +5,22 @@ import hashlib, json, math, os, re, time, uuid
 from pathlib import Path
 import numpy as np
 import soundfile as sf
+from preview_cache import for_project, lease
 
 ROOT = Path(os.environ.get('MUSIC_WORKBENCH_ROOT', str(Path(__file__).resolve().parent))).resolve()
 DATA = ROOT/'data'
 
 def save_json(path, value):
-    temp = path.with_suffix('.tmp')
-    temp.write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding='utf-8')
-    os.replace(temp, path)
+    path=Path(path)
+    temp=path.with_name('.'+path.name+'.'+uuid.uuid4().hex+'.tmp')
+    try:
+        with temp.open('x',encoding='utf-8') as output:
+            json.dump(value,output,ensure_ascii=False,indent=2)
+            output.flush();os.fsync(output.fileno())
+        os.replace(temp,path)
+    finally:
+        try:temp.unlink(missing_ok=True)
+        except OSError:pass
 
 def finite(value):
     if isinstance(value, bool): raise ValueError('参数必须是数字')
@@ -24,6 +32,8 @@ class Project:
     def __init__(self, directory=DATA):
         self.directory = Path(directory)
         self._preview_cache = {}
+        self._preview_disk = None
+        self._is_snapshot = False
         self.meta = json.loads((self.directory/'preparation.json').read_text())
         self.sr = self.meta['sample_rate']
         self.audio = {t['id']:sf.read(self.directory/t['file'],dtype='float32',always_2d=True)[0] for t in self.meta['tracks']}
@@ -95,18 +105,35 @@ class Project:
             backup=self.directory/f'project-before-track-switches-r{self.state["revision"]}.json'
             if not backup.exists():save_json(backup,self.state)
             changed=any(t['muted'] or t['solo'] for t in self.state['tracks'].values())
-            for t in self.state['tracks'].values():t.update(muted=False,solo=False)
-            self.state['track_switches_version']=1
-            if changed:self.state['revision']+=1
-            save_json(self.file,self.state)
+            candidate=deepcopy(self.state)
+            for t in candidate['tracks'].values():t.update(muted=False,solo=False)
+            candidate['track_switches_version']=1
+            if changed:candidate['revision']+=1
+            self._commit_state(candidate)
         # Legacy projects could have mute and solo simultaneously set. Prefer
         # solo (audible) and retain an exact pre-migration backup for recovery.
         normalized=self.exclusive(self.state['tracks'])
         if normalized!=self.state['tracks']:
             backup=self.directory/f'project-before-exclusive-r{self.state["revision"]}.json'
             if not backup.exists():save_json(backup,self.state)
-            self.state['tracks']=normalized;self.state['revision']+=1
-            save_json(self.file,self.state)
+            candidate=deepcopy(self.state)
+            candidate['tracks']=normalized;candidate['revision']+=1
+            self._commit_state(candidate)
+        self._preview_disk=for_project(self.directory,self.audio,
+                                      [t['file'] for t in self.meta['tracks']])
+        self._protect_previews()
+
+    def _protect_previews(self):
+        if self._preview_disk is not None and not self._is_snapshot:
+            self._preview_disk.protect_current(f'{name}-{self.track_digest(name)}.wav'
+                for name,t in self.state['tracks'].items() if not t.get('removed'))
+
+    def _commit_state(self,candidate):
+        # Failed writes leave the live state, undo cursor and audio untouched.
+        save_json(self.file,candidate)
+        self.state=candidate
+        self._preview_cache={}
+        self._protect_previews()
 
     @staticmethod
     def exclusive(tracks):
@@ -192,6 +219,7 @@ class Project:
         frozen.state=deepcopy(self.state);frozen.meta=deepcopy(self.meta)
         frozen.vocal_assets=deepcopy(self.vocal_assets);frozen.vocal_cache=dict(self.vocal_cache)
         frozen._preview_cache={}
+        frozen._is_snapshot=True
         return frozen
 
     def available_parts(self):
@@ -204,6 +232,12 @@ class Project:
     def track_preview(self,name):
         """Reuse unchanged preview audio and peaks, including after reopening."""
         key=self.track_digest(name);file=self.directory/f'{name}-{key}.wav'
+        with lease(file):
+            result=self._track_preview(name,key,file)
+            self._preview_disk.touch(file)
+            return result
+
+    def _track_preview(self,name,key,file):
         sidecar=file.with_suffix('.peaks.json')
         def token():
             try:
@@ -256,6 +290,7 @@ class Project:
                 'vocal_candidates':list(reversed(list(self.vocal_assets.values()))),
                 'available_parts':self.available_parts(),
                 'original_audio_url':f'/audio/{self.state["id"]}/original.wav',
+                'preview_cache':dict(self._preview_disk.last_status),
                 'source_sha256':self.state['source_sha256'],'generation_job_id':self.meta.get('generation_job_id'),'instrumental':bool(self.meta.get('instrumental'))}
 
     def check_revision(self, revision):
@@ -392,8 +427,9 @@ class Project:
         history=self.state['history'][:self.state['cursor']]
         history.append({'id':str(uuid.uuid4()),'label':label,'origin':origin,'command':deepcopy(command),
                         'before':before,'after':after,'timestamp':time.time()})
-        self.state.update(tracks=after,history=history,cursor=len(history),revision=self.state['revision']+1)
-        save_json(self.file,self.state)
+        candidate=deepcopy(self.state)
+        candidate.update(tracks=after,history=history,cursor=len(history),revision=self.state['revision']+1)
+        self._commit_state(candidate)
         return self.controls_view() if compact else self.view()
 
     def move_history(self, direction, expected_revision):
@@ -402,8 +438,9 @@ class Project:
         if direction=='undo' and c>0: tracks=h[c-1]['before']; c-=1
         elif direction=='redo' and c<len(h): tracks=h[c]['after']; c+=1
         else: raise ValueError('没有可撤销或重做的操作')
-        self.state.update(tracks=self.exclusive(tracks),cursor=c,revision=self.state['revision']+1)
-        save_json(self.file,self.state)
+        candidate=deepcopy(self.state)
+        candidate.update(tracks=self.exclusive(tracks),cursor=c,revision=self.state['revision']+1)
+        self._commit_state(candidate)
         return self.view()
 
     def restore_history(self,cursor,expected_revision):
@@ -412,6 +449,7 @@ class Project:
         if isinstance(cursor,bool) or not isinstance(cursor,int) or not 0<=cursor<=len(history):raise ValueError('版本记录不存在')
         if cursor==self.state['cursor']:return self.view()
         tracks=history[cursor-1]['after'] if cursor else history[0]['before']
-        self.state.update(tracks=self.exclusive(tracks),cursor=cursor,revision=self.state['revision']+1)
-        save_json(self.file,self.state)
+        candidate=deepcopy(self.state)
+        candidate.update(tracks=self.exclusive(tracks),cursor=cursor,revision=self.state['revision']+1)
+        self._commit_state(candidate)
         return self.view()

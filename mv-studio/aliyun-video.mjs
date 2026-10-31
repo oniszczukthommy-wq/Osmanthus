@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import {createBudgetLock} from './budget-lock.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {createMaterialStore} from './materials.mjs';
@@ -41,6 +42,7 @@ export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1
   fs.mkdirSync(requestedRoot, {recursive: true});
   if (fs.lstatSync(requestedRoot).isSymbolicLink()) throw error('视频任务目录不能是符号链接', 500);
   const root = fs.realpathSync(requestedRoot), identity = fs.statSync(root), submitting = new Map(), refreshing = new Map();
+  const budgetLock=createBudgetLock({root,label:'视频',codePrefix:'ALI_VIDEO'});
   const assertRoot = () => { const stat = fs.lstatSync(root); if (!stat.isDirectory() || stat.isSymbolicLink() || stat.dev !== identity.dev || stat.ino !== identity.ino) throw error('视频任务目录已改变', 500); };
   const fileFor = id => { if (!validId(id)) throw error('视频请求标识需为合法UUID'); return path.join(root, id + '.json'); };
   const folderFor = id => { if (!validId(id)) throw error('视频任务标识无效'); return path.join(root, id); };
@@ -78,13 +80,14 @@ export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1
   function allRecords() { assertRoot(); return fs.readdirSync(root).filter(name => name.endsWith('.json') && validId(name.slice(0, -5))).map(name => readRecord(name.slice(0, -5))); }
   function budget() { const usedCents = allRecords().reduce((sum, record) => sum + record.accountedCents, 0); return {budgetCny: budgetCents / 100, usedCny: usedCents / 100, remainingCny: Math.max(0, budgetCents - usedCents) / 100}; }
   function capabilities() {
-    let accounting, reason = '';
+    const lockState=budgetLock.status();
+    let accounting, reason = lockState.available?'':lockState.reason;
     try { accounting = budget(); } catch (cause) { reason = cause.message; }
     if (!key.trim()) reason = '阿里云视频密钥尚未配置';
     else if (!regionSupported) reason = '当前地域的模型或输出域名尚未完成本地核验，请使用北京地域';
     else if (!probe && fetchImpl === globalThis.fetch) reason = '真实视频生成需要本地ffprobe校验';
     const durations = model === 'wanx2.1-t2v-turbo' ? [5] : Array.from({length:14}, (_, index) => index + 2);
-    return {available: !reason, reason, model, region, maxPromptChars:model==='wan2.6-i2v-flash'?1500:800, duration: 5, durations, minDuration:durations[0], maxDuration:durations.at(-1), resolution: '720P', audio: false, ratios: Object.keys(SIZES), estimatedCostCny: estimateCents / 100, estimatedCostsCny:Object.fromEntries(durations.map(duration=>[duration,estimatedCents(model,region,duration)/100])), pollIntervalMs, mediaProbe: !!probe, ...accounting};
+    return {available: !reason, reason, budgetLock:lockState, model, region, maxPromptChars:model==='wan2.6-i2v-flash'?1500:800, duration: 5, durations, minDuration:durations[0], maxDuration:durations.at(-1), resolution: '720P', audio: false, ratios: Object.keys(SIZES), estimatedCostCny: estimateCents / 100, estimatedCostsCny:Object.fromEntries(durations.map(duration=>[duration,estimatedCents(model,region,duration)/100])), pollIntervalMs, mediaProbe: !!probe, ...accounting};
   }
   function readImage(input) {
     if (!ownKeys(input, ['material_id']) || !validId(input.material_id)) throw error('图生视频需要有效的本地图片素材标识');
@@ -144,16 +147,15 @@ export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1
   }
   function mark(record, status, patch = {}) { return writeRecord({...record, ...patch, status, updatedAt: new Date().toISOString()}); }
   function reserve(normalized) {
-    assertRoot(); const lock = path.join(root, '.budget-lock');
-    try { fs.mkdirSync(lock); } catch (cause) { if (cause.code === 'EEXIST') throw error('视频预算正在登记，请稍后查询任务，勿重复提交', 409, 'ALI_VIDEO_BUDGET_LOCKED', {retryBlocked: true}); throw cause; }
-    try {
+    assertRoot();
+    return budgetLock.run(() => {
       const records = allRecords(), duplicate = records.find(record => record.requestHash === normalized.requestHash && ['submitting', 'queued', 'running', 'downloading', 'downloaded', 'uncertain', 'unknown'].includes(record.status));
       if (duplicate) throw error('相同内容已有任务或执行结果未确认，已阻止重复付费', 409, 'ALI_VIDEO_DUPLICATE_ACTIVE', {retryBlocked: true, existingId: duplicate.id});
       const requestCents = estimatedCents(model, region, normalized.request.duration);
       if (records.reduce((sum, record) => sum + record.accountedCents, 0) + requestCents > budgetCents) throw error('视频生成预算不足，未提交付费请求', 402, 'ALI_VIDEO_BUDGET_EXCEEDED', {estimatedCostCny: requestCents / 100, ...budget()});
       const now = new Date().toISOString();
       return writeRecord({schema: SCHEMA, id: normalized.id, requestHash: normalized.requestHash, scope, model, region, request: normalized.request, estimatedCents: requestCents, accountedCents: requestCents, status: 'submitting', createdAt: now, updatedAt: now}, true);
-    } finally { fs.rmdirSync(lock); }
+    });
   }
   async function doSubmit(normalized) {
     let record = reserve(normalized), response, body;
@@ -206,7 +208,7 @@ export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1
     }
     throw error('视频结果重定向次数过多', 502);
   }
-  function validateVideo(file, record) {
+  async function validateVideo(file, record) {
     if (!probe) {
       const {fd, stat} = regular(file, maxOutputBytes); let at = 0, ftyp = false, moov = false, mdat = false;
       try {
@@ -221,7 +223,7 @@ export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1
         return {width: null, height: null, duration: null, validation: 'container-only-test'};
       } finally { fs.closeSync(fd); }
     }
-    const info = probe(file), video = info?.streams?.find(stream => stream.codec_type === 'video' && !Number(stream.disposition?.attached_pic));
+    const info = await probe(file), video = info?.streams?.find(stream => stream.codec_type === 'video' && !Number(stream.disposition?.attached_pic));
     const duration = Number(info?.format?.duration || video?.duration), audio = info?.streams?.some(stream => stream.codec_type === 'audio');
     const requestedDuration=record.request.duration??5,tolerance=Math.max(.25,Math.min(.75,requestedDuration*.05));
     const minimum=record.model==='wanx2.1-t2v-turbo'?4:requestedDuration-tolerance,maximum=record.model==='wanx2.1-t2v-turbo'?6.5:requestedDuration+tolerance;
@@ -251,7 +253,7 @@ export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1
       fs.closeSync(fd); fd = undefined;
       const declared = response.headers?.get?.('content-length');
       if (bytes < 32 || (declared !== null && declared !== undefined && Number(declared) !== bytes)) throw error('视频下载未完整结束', 502);
-      const media = validateVideo(part, record), pendingOutput = {part: partName, bytes, sha256: digest.digest('hex'), ...media};
+      const media = await validateVideo(part, record), pendingOutput = {part: partName, bytes, sha256: digest.digest('hex'), ...media};
       record = mark(record, 'downloaded', {pendingOutput}); registered = true;
       return finalize(record);
     } finally {

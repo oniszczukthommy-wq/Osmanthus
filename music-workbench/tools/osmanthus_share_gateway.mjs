@@ -53,7 +53,9 @@ const server = http.createServer((req, res) => {
   if (Number(req.headers['content-length'] || 0) > 80000000) return reply(413, '文件超过 80 MB。');
 
   const headers = Object.fromEntries(Object.entries(req.headers).filter(([name]) =>
-    !hops.has(name) && !name.startsWith('x-forwarded-') && !name.startsWith('cf-')));
+    !hops.has(name) && !name.startsWith('x-forwarded-') && !name.startsWith('cf-') && !name.startsWith('sec-fetch-')));
+  // The public browser context was checked above. The authenticated loopback
+  // request has a new authority; do not forward cross-site navigation metadata.
   headers.host = `127.0.0.1:${cfg.upstream_port}`;
   headers.origin = `http://${headers.host}`;
   headers.connection = 'close';

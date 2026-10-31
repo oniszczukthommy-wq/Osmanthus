@@ -29,6 +29,14 @@ function flow({pollStatus = 'SUCCEEDED', videoUrl = remote, download = () => new
   return {calls, fetchImpl};
 }
 
+test('async video probe is awaited before publishing ready and permits event-loop progress',async t=>{
+  let release,entered;const gate=new Promise(r=>{release=r;}),started=new Promise(r=>{entered=r;});
+  const mock=flow(),{adapter}=sandbox(t,{fetchImpl:mock.fetchImpl,probe:async()=>{entered();await gate;return videoInfo();}}),input=request();
+  await adapter.submit(input);const pending=adapter.refresh(input.request_id);await started;
+  assert.equal(adapter.get(input.request_id).status,'downloading');await new Promise(setImmediate);
+  release();assert.equal((await pending).status,'ready');
+});
+
 test('官方async请求、同ID持久幂等、重启轮询和本地无声MP4输出校验', async t => {
   const mock = flow(), {adapter, config, folder} = sandbox(t, {fetchImpl: mock.fetchImpl}), input = request();
   assert.equal(adapter.capabilities().estimatedCostCny, 1.2); assert.equal(adapter.capabilities().budgetCny, 20);

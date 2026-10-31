@@ -137,7 +137,8 @@ function atomicJson(file, value) {
 
 /**
  * Local copies for the free canvas. Does not read or change the project/song.
- * All methods are synchronous, matching the server's ffprobe and JSON helpers.
+ * upload follows the injected probe: asynchronous in the web server,
+ * synchronous for lightweight callers. Read-only methods stay synchronous.
  * upload(name, Buffer) -> public material; list()/get(id) -> verified material(s).
  * asset(id or stored filename) -> {file, mime, material}, or null.
  * remove(id) -> boolean; only a registered, hash-verified copy can be removed.
@@ -190,11 +191,12 @@ export function createMaterialStore({data, probe, write = atomicJson} = {}) {
     assertRoot();
     const id = crypto.randomUUID(), file = fileFor(id + ext), record = fileFor(id + '.json');
     let created = false, metadataWriteAttempted = false;
-    try {
-      fs.writeFileSync(file, bytes, {flag: 'wx', mode: 0o600});
-      created = true;
-      let info;
-      try { info = probe(file); } catch { throw fail('素材无法读取，请上传有效的图片、视频或音频'); }
+    const cleanup = error => {
+      if (created) { try { fs.unlinkSync(file); } catch {} }
+      if (metadataWriteAttempted) { try { fs.unlinkSync(record); } catch {} }
+      throw error;
+    };
+    const finish = info => {
       const dimensions = inspect(ext, bytes, info);
       const material = {id, ...dimensions, name, url: `/files/materials/${id}${ext}`, bytes: bytes.length, sha256: digest(bytes), createdAt: new Date().toISOString()};
       if (fs.existsSync(record)) throw fail('素材注册冲突，请重新上传', 500);
@@ -202,13 +204,17 @@ export function createMaterialStore({data, probe, write = atomicJson} = {}) {
       write(record, {version: 1, material});
       if (!registered(id)) throw fail('素材保存校验失败，请重新上传', 500);
       return material;
-    } catch (error) {
-      // These are this call's unique copies, never the original user file.
-      if (created) { try { fs.unlinkSync(file); } catch {} }
-      if (metadataWriteAttempted) { try { fs.unlinkSync(record); } catch {} }
-      throw error;
-    }
+    };
+    const probeFailure = error => { throw error.code === 'MEDIA_BUSY' ? error : fail('素材无法读取，请上传有效的图片、视频或音频'); };
+    try {
+      fs.writeFileSync(file, bytes, {flag: 'wx', mode: 0o600});
+      created = true;
+      let info;
+      try { info = probe(file); } catch (error) { probeFailure(error); }
+      return info && typeof info.then === 'function' ? info.then(finish, probeFailure).catch(cleanup) : finish(info);
+    } catch (error) { return cleanup(error); }
   }
+
   function list() {
     assertRoot();
     return fs.readdirSync(root).filter(name => name.endsWith('.json') && ID.test(name.slice(0, -5))).map(name => registered(name.slice(0, -5))?.material).filter(Boolean).sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id));

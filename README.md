@@ -30,6 +30,8 @@
 
 音乐和 MV 文字调用有各自持久化的次数限额，失败或结果不确定的供应商请求也计次；金额预算仍独立保留。新限制只记录启用后的调用，不追溯已有账户支出。下载限制在登记工程的媒体目录内；损坏的历史生歌记录保留原文件并停止自动付费恢复，不影响其他正常歌曲。配置、重启和恢复注意事项见 [调用限额与安全恢复说明](docs/SAFETY_LIMITS.md)。
 
+画布多标签冲突、音乐保存失败回滚、预览缓存回收、预算锁恢复、异步媒体处理、本机访问限制及主分支检查规则见 [可靠性与回归说明](docs/RELIABILITY.md)。
+
 ## Windows 本机运行
 
 完整解压后，按 [Windows 安装说明](docs/WINDOWS.md) 安装 Python 3.12、Node.js 22+ 和 FFmpeg，运行 `Setup-Windows.cmd`；填写自己的 `.env`，再双击 `Start-Osmanthus.cmd`。统一入口为 <http://127.0.0.1:8603/>。停止用 `Stop-Osmanthus.cmd`，依赖检查用 `Check-Windows.cmd`。

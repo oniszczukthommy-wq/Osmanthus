@@ -16,6 +16,14 @@ function wav(value=1200,sampleRate=24000){const count=sampleRate/10,b=Buffer.all
 function sandbox(t,options={}){const data=fs.mkdtempSync(path.join(os.tmpdir(),'mv-aliyun-speech-test-'));t.after(()=>fs.rmSync(data,{recursive:true,force:true}));const config={data,key:'server-only-speech-secret',workspace:'llm-test',probe,fetchImpl:async()=>{throw Error('Every call requires a mock');},...options};return{data,folder:path.join(data,'aliyun-speech'),config,adapter:createAliSpeech(config)};}
 function flow({post,download}={}){const calls=[];let posts=0;const fetchImpl=async(url,init)=>{calls.push({url:String(url),init});if(init.method==='POST'){const index=posts++;return post?post(index,url,init):json({request_id:'speech-request-'+index,output:{finish_reason:'stop',audio:{url:`http://dashscope-result-bj.oss-cn-beijing.aliyuncs.com/segment-${index}.wav?Expires=9999999999&Signature=speech-signed-private`,expires_at:9999999999}},usage:{characters:20}});}return download?download(url,init):new Response(wav(),{headers:{'Content-Type':'audio/wav','Content-Length':String(wav().length)}});};return{calls,fetchImpl};}
 
+test('async speech probe is awaited through segment download and merge',async t=>{
+  let release,entered,probes=0;const gate=new Promise(r=>{release=r;}),started=new Promise(r=>{entered=r;});
+  const mock=flow(),{adapter}=sandbox(t,{fetchImpl:mock.fetchImpl,probe:async file=>{probes++;entered();await gate;const wave=inspectPcmWav(fs.readFileSync(file));return {format:{format_name:'wav',duration:wave.duration},streams:[{codec_type:'audio',codec_name:'pcm_s16le',channels:wave.channels,sample_rate:wave.sampleRate}]};}}),request=input();
+  const pending=adapter.submit(request);await started;
+  assert.equal(adapter.get(request.request_id).status,'downloading');await new Promise(setImmediate);
+  release();assert.equal((await pending).status,'ready');assert.equal(probes,3);
+});
+
 test('官方四个非克隆系统音色、汉字双计数和1000字拆段边界',()=>{
   assert.equal(ALI_SPEECH_VOICES.length,4);assert.deepEqual(ALI_SPEECH_VOICES.map(v=>v.id),['Cherry','Jennifer','Ethan','Ryan']);assert.equal(new Set(ALI_SPEECH_VOICES.map(v=>v.gender)).size,2);
   assert.equal(billableSpeechCharacters('你好'),4);assert.equal(billableSpeechCharacters('中A文123'),8);assert.equal(billableSpeechCharacters('中文。'),5);assert.equal(billableSpeechCharacters('中 文。'),6);

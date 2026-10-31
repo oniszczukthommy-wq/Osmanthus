@@ -31,7 +31,9 @@ def handler_class(root, *, windows=False):
         LEGACY_DATA=root/'legacy',project_directory=lambda _:root/'project',export_directory=lambda _:root/'exports',
         send_file_chunk=lambda conn,data:(conn.sendall(data) is None))
     from media_paths import media_file
+    from preview_cache import open_media
     scope['media_file']=media_file
+    scope['open_media']=open_media
     exec(compile(ast.fix_missing_locations(ast.Module(body=[cls],type_ignores=[])),str(CODE/'server.py'),'exec'),scope)
     scope['DownloadHandler'].log_message=lambda *args:None
     return scope['DownloadHandler']

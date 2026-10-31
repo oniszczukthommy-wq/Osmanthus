@@ -21,6 +21,14 @@ const imageInfo=(width=512,height=512)=>({format:{format_name:'png_pipe'},stream
 function sandbox(t,options={}){const data=fs.mkdtempSync(path.join(os.tmpdir(),'mv-aliyun-image-test-'));t.after(()=>fs.rmSync(data,{recursive:true,force:true}));const config={data,key:'server-only-image-secret',workspace:'llm-test',probe:()=>imageInfo(),fetchImpl:async()=>{throw Error('Every call needs an explicit mock');},...options};return{data,folder:path.join(data,'aliyun-image'),config,adapter:createAliImage(config)};}
 function flow({url=remote,bytes=png(),post,download}={}){const calls=[];const fetchImpl=async(urlValue,init)=>{calls.push({url:String(urlValue),init});if(init.method==='POST')return post?post(urlValue,init):json({request_id:'provider-image-1',output:{choices:[{finish_reason:'stop',message:{role:'assistant',content:[{image:url}]}}]},usage:{image_count:1,width:512,height:512}});return download?download(urlValue,init):new Response(bytes,{headers:{'Content-Type':'image/png','Content-Length':String(bytes.length)}});};return{calls,fetchImpl};}
 
+test('async image probe is awaited before publishing ready and permits event-loop progress',async t=>{
+  let release,entered;const gate=new Promise(r=>{release=r;}),started=new Promise(r=>{entered=r;});
+  const mock=flow(),{adapter}=sandbox(t,{fetchImpl:mock.fetchImpl,probe:async()=>{entered();await gate;return imageInfo();}}),request=input();
+  const pending=adapter.submit(request);await started;
+  assert.equal(adapter.get(request.request_id).status,'downloading');await new Promise(setImmediate);
+  release();assert.equal((await pending).status,'ready');
+});
+
 test('官方Qwen2.0同步文生图、持久幂等、真实PNG副本与密钥/结果URL不明文落盘',async t=>{
   const mock=flow(),{adapter,folder,config}=sandbox(t,{fetchImpl:mock.fetchImpl}),request=input();
   assert.equal(adapter.capabilities().estimatedCostCny,.2);assert.equal(adapter.capabilities().budgetCny,4);

@@ -13,6 +13,8 @@ const digest = value => crypto.createHash('sha256').update(JSON.stringify(value)
 const isDate = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const validId = value => typeof value === 'string' && UUID.test(value);
 const clone = value => JSON.parse(JSON.stringify(value));
+const validRevision = value => Number.isSafeInteger(value) && value >= 0;
+const conflict = (id, expected, current) => Object.assign(fail('此画布已在其他页面更新。本页编辑仍保留，请另存副本，或保留副本后刷新。', 409), {code:'CANVAS_CONFLICT',project_id:id,expected_revision:expected??null,current_revision:current});
 const cleanTitle = value => {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > 120 || /[\x00-\x1f\x7f]/.test(value)) throw fail('画布名称需为1至120字的单行文字');
   return value.trim();
@@ -26,8 +28,10 @@ const previewUrl = value => typeof value === 'string' && ((value.startsWith('/')
  * A local catalogue of complete MV projects; never changes the active project,
  * handoff cache, material files, source audio, or rendered outputs.
  *
- * save(project), rename(id,title), duplicate(id,{title?}), archive(id), restore(id)
- * return {id,project,createdAt,updatedAt,archivedAt}. get(id) returns this record
+ * save(project), rename(id,title,{revision}), duplicate(id,{title?}),
+ * archive(id,{revision}), restore(id,{revision}) use optimistic concurrency.
+ * Project snapshots carry canvasRevision; historical records start at zero.
+ * return {id,project,revision,createdAt,updatedAt,archivedAt}. get(id) returns this record
  * or null; pass {includeArchived:true} to read an archived record. list() returns
  * active summaries; list({archived:true}) returns archived summaries only.
  * Optional validate/write/idFactory callbacks must be synchronous. write receives
@@ -66,6 +70,7 @@ export function createCanvasProjects({data, validate = validateProject, write = 
     } catch { throw fail('画布项目必须是可保存的JSON数据'); }
     if (Buffer.byteLength(serialized) > MAX_CANVAS_RECORD_BYTES - 1024) throw fail('画布项目数据超过16MB', 413);
     const project = JSON.parse(serialized);
+    if (project.canvasRevision !== undefined && !validRevision(project.canvasRevision)) throw fail('画布保存版本无效');
     project.title = cleanTitle(project.title);
     if (!object(project.source) || !object(project.plan) || (project.studio != null && !object(project.studio)) || (project.musicHandoff != null && !object(project.musicHandoff))) throw fail('画布项目内容不完整');
     try {
@@ -82,7 +87,10 @@ export function createCanvasProjects({data, validate = validateProject, write = 
     if (!object(saved) || saved.schema !== CANVAS_PROJECT_SCHEMA || saved.id !== id || !object(saved.project) || saved.project.id !== id || !isDate(saved.createdAt) || !isDate(saved.updatedAt) || saved.updatedAt < saved.createdAt || (saved.archivedAt !== null && (!isDate(saved.archivedAt) || saved.archivedAt < saved.createdAt || saved.archivedAt > saved.updatedAt)) || !/^[a-f0-9]{64}$/.test(saved.sha256 || '') || digest(saved.project) !== saved.sha256) throw fail('画布项目记录校验失败');
     const project = checkedProject(saved.project);
     if (digest(project) !== saved.sha256) throw fail('画布项目记录校验失败');
-    return {id, project, createdAt: saved.createdAt, updatedAt: saved.updatedAt, archivedAt: saved.archivedAt};
+    const revision = saved.revision ?? 0;
+    if (!validRevision(revision) || (saved.revision !== undefined && project.canvasRevision !== revision) || (saved.revision === undefined && project.canvasRevision !== undefined && project.canvasRevision !== 0)) throw fail('画布保存版本校验失败');
+    project.canvasRevision = revision;
+    return {id, project, revision, createdAt: saved.createdAt, updatedAt: saved.updatedAt, archivedAt: saved.archivedAt};
   }
   function readRecord(id) {
     if (!validId(id)) return null;
@@ -120,14 +128,25 @@ export function createCanvasProjects({data, validate = validateProject, write = 
     }
   }
   const timestamp = previous => new Date(Math.max(Date.now(), previous ? Date.parse(previous.updatedAt) + 1 : 0)).toISOString();
+  function requireRevision(record, revision) {
+    if (!validRevision(revision) || revision !== record.revision) throw conflict(record.id, revision, record.revision);
+  }
   function save(input) {
     const project = checkedProject(input);
     assertRoot();
     const existing = readRecord(project.id);
     if (!existing && fileExists(target(project.id))) throw fail('已有画布记录无法校验，未覆盖原文件', 409);
     if (existing?.archivedAt) throw fail('画布已归档，请先恢复再保存', 409);
+    const expected = project.canvasRevision ?? 0;
+    if (existing) requireRevision(existing, expected);
+    else if (expected !== 0) throw conflict(project.id, expected, null);
+    // Opening an unchanged project or refreshing the music handoff cache must
+    // not invalidate other tabs merely by reading/activating the same snapshot.
+    if (existing && digest(project) === digest(existing.project)) return clone(existing);
+    const revision = (existing?.revision ?? 0) + 1;
+    project.canvasRevision = revision;
     const updatedAt = timestamp(existing);
-    return commit({id: project.id, project, createdAt: existing?.createdAt || updatedAt, updatedAt, archivedAt: null});
+    return commit({id: project.id, project, revision, createdAt: existing?.createdAt || updatedAt, updatedAt, archivedAt: null});
   }
   function get(id, {includeArchived = false} = {}) {
     const record = readRecord(id);
@@ -144,8 +163,9 @@ export function createCanvasProjects({data, validate = validateProject, write = 
     assertRoot();
     return fs.readdirSync(root).filter(name => name.endsWith('.json') && validId(name.slice(0, -5))).map(name => readRecord(name.slice(0, -5))).filter(record => record && Boolean(record.archivedAt) === Boolean(archived)).map(summary).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
   }
-  function rename(id, title) {
+  function rename(id, title, {revision} = {}) {
     const record = required(id);
+    requireRevision(record, revision);
     record.project.title = cleanTitle(title);
     return save(record.project);
   }
@@ -155,6 +175,7 @@ export function createCanvasProjects({data, validate = validateProject, write = 
     requireId(newId);
     if (newId === id || fileExists(target(newId))) throw fail('新画布项目标识已存在，请重试', 409);
     project.id = newId;
+    delete project.canvasRevision;
     const title = typeof options === 'string' ? options : options?.title;
     project.title = title === undefined ? original.project.title.slice(0, 117) + ' 副本' : cleanTitle(title);
     if (project.musicHandoff) {
@@ -166,15 +187,19 @@ export function createCanvasProjects({data, validate = validateProject, write = 
     // deleted, or written into the original handoff's project cache.
     return save(project);
   }
-  function archive(id) {
+  function archive(id, {revision} = {}) {
     const record = required(id, true);
+    requireRevision(record, revision);
     if (record.archivedAt) return record;
+    record.project.canvasRevision = ++record.revision;
     record.updatedAt = timestamp(record); record.archivedAt = record.updatedAt;
     return commit(record);
   }
-  function restore(id) {
+  function restore(id, {revision} = {}) {
     const record = required(id, true);
+    requireRevision(record, revision);
     if (!record.archivedAt) return record;
+    record.project.canvasRevision = ++record.revision;
     record.updatedAt = timestamp(record); record.archivedAt = null;
     return commit(record);
   }

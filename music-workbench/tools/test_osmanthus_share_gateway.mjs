@@ -7,10 +7,12 @@ import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {once} from 'node:events';
 import {fileURLToPath} from 'node:url';
+import {localRequestAllowed} from '../../mv-studio/local-access.mjs';
 
 test('friend gateway authenticates, enforces origins and preserves media streaming', async t => {
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'osmanthus-share-test-'));
   const upstream=http.createServer(async(req,res)=>{
+    if(!localRequestAllowed(req)){res.writeHead(403);res.end('local guard rejected');return;}
     if(req.url==='/stream'){
       res.writeHead(200,{'Content-Type':'audio/mpeg'});res.write('first');
       setTimeout(()=>res.end('last'),500);return;
@@ -55,6 +57,12 @@ test('friend gateway authenticates, enforces origins and preserves media streami
   assert.equal(received.headers.origin,`http://127.0.0.1:${config.upstream_port}`);
   assert.equal(received.headers.cookie,undefined);assert.equal(received.headers.authorization,undefined);assert.equal(received.headers['x-forwarded-host'],undefined);
   assert.equal(JSON.parse((await request('/mv/api/capabilities')).body).url,'/mv/api/capabilities');
+  const navigation=await request('/',{headers:{'Sec-Fetch-Site':'cross-site','Sec-Fetch-Mode':'navigate','Sec-Fetch-Dest':'document'}});
+  assert.equal(navigation.status,200);
+  const forwarded=JSON.parse(navigation.body).headers;
+  assert.equal(forwarded['sec-fetch-site'],undefined);assert.equal(forwarded['sec-fetch-mode'],undefined);
+  assert.equal(forwarded.origin,`http://127.0.0.1:${config.upstream_port}`);
+  assert.equal((await request('/api/edit',{method:'POST',headers:{Origin:config.origin,'Sec-Fetch-Site':'cross-site'},body:'{}'})).status,403);
   const range=await request('/audio',{headers:{Range:'bytes=0-2'}});
   assert.equal(range.status,206);assert.equal(range.headers['content-range'],'bytes 0-2/10');assert.equal(range.body,'mp3');
   await new Promise((resolve,reject)=>{

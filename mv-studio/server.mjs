@@ -1,4 +1,4 @@
-import http from 'node:http';import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {spawn,execFileSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
+import http from 'node:http';import fs from 'node:fs';import path from 'node:path';import crypto from 'node:crypto';import {spawn} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {validateProject,clone,resizePlan} from './public/domain.js';
 import {createMusicBridge} from './music-bridge.mjs';
 import {createMaterialStore,MATERIAL_LIMITS} from './materials.mjs';
@@ -21,6 +21,8 @@ import {createCanvasVision} from './canvas-vision.mjs';
 import {getOiiPromptTemplate} from './public/oiioii-canvas-catalog.js';
 import {mediaTools,readOptionalEnv} from './runtime-config.mjs';
 import {createTextUsage} from './text-usage.mjs';
+import {localRequestAllowed} from './local-access.mjs';
+import {createMediaProcessing} from './media-processing.mjs';
 import {createLegacyPlanning} from './legacy-planning.mjs';
 const ROOT=path.dirname(fileURLToPath(import.meta.url)),PUBLIC=path.join(ROOT,'public');
 const env=readOptionalEnv(process.env.MV_ENV_FILE,ROOT);
@@ -28,6 +30,7 @@ const env=readOptionalEnv(process.env.MV_ENV_FILE,ROOT);
 for(const[name,value]of Object.entries(env))if(process.env[name]===undefined)process.env[name]=value;
 const DATA=process.env.MV_DATA_DIR||path.join(ROOT,'data');
 const {ffmpeg:ff,ffprobe:fp}=mediaTools();
+const mediaProcessing=createMediaProcessing({ffmpeg:ff,ffprobe:fp});
 for(const x of ['uploads','jobs','versions'])fs.mkdirSync(path.join(DATA,x),{recursive:true});
 const json=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value,null,2));fs.renameSync(file+'.tmp',file)},read=(file,fallback=null)=>{try{return JSON.parse(fs.readFileSync(file))}catch{return fallback}},uid=()=>crypto.randomUUID(),sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const key=process.env.MV_DISABLE_MODELS==='1'?'':process.env.DEEPSEEK_API_KEY||env.DEEPSEEK_API_KEY||'',model=process.env.DEEPSEEK_MODEL||env.DEEPSEEK_MODEL||'deepseek-flash';
@@ -40,9 +43,10 @@ const aiMV=createAIMVWorkflow({data:DATA,planner:aiPlanner,video:aliVideo,audioP
 const tasks=new Map();
 function capability(){return{kind:'local-ai-music-video-workspace',freeRender:fs.existsSync(ff)&&fs.existsSync(fp),deepseek:!!key,aliyunVideo:aliVideo.capabilities(),canvas:{image:imageModel.capabilities(),imageVideo:imageVideo.capabilities(),speech:speechModel.capabilities(),vision:canvasVision.capabilities(),asr:canvasAudio.capabilities(),editing:fs.existsSync(ff)&&fs.existsSync(fp),visualAnalysis:!!aliKey},asr:canvasAudio.capabilities().available,platformLinks:false,comfy:{available:false,reason:'当前视频使用阿里万相API。'},sample:fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))};}
 function audioPath(source){if(source.id!=='sample'&&!/^[a-f0-9-]{36}\.(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(source.id))throw Error('音频来源无效');const p=source.id==='sample'?path.join(PUBLIC,'assets/sample-song.mp3'):path.join(DATA,'uploads',source.id);let stat;try{stat=fs.lstatSync(p);}catch{throw Error('找不到原音频，请重新上传');}if(!stat.isFile()||stat.isSymbolicLink())throw Error('原音频文件无效，请重新上传');return p;}
-function probe(file){return JSON.parse(execFileSync(fp,['-v','error','-show_format','-show_streams','-of','json',file],{encoding:'utf8',timeout:20000,maxBuffer:1e6}));}
-function waveform(file){if(!fs.existsSync(file))return[];try{const a=execFileSync(ff,['-v','error','-i',file,'-vn','-ac','1','-ar','400','-f','f32le','-'],{timeout:20000,maxBuffer:20e6});const bins=[];for(let i=0;i<100;i++){const start=Math.floor(a.length/4*i/100),end=Math.floor(a.length/4*(i+1)/100);let sum=0;for(let j=start;j<end;j++){const n=a.readFloatLE(j*4);sum+=n*n;}bins.push(Math.sqrt(sum/Math.max(1,end-start)));}const max=Math.max(.001,...bins);return bins.map(x=>Math.round(x/max*100)/100);}catch{return[];}}
-const sampleWave=fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))?waveform(path.join(PUBLIC,'assets/sample-song.mp3')):[];
+function probe(file){return mediaProcessing.probe(file);}
+function waveform(file){return mediaProcessing.waveform(file);}
+let sampleWave=[];
+if(fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3')))waveform(path.join(PUBLIC,'assets/sample-song.mp3')).then(value=>{sampleWave=value;}).catch(()=>{});
 function version(p,label,output=null){const id=uid(),v={id,createdAt:new Date().toISOString(),label,project:clone(p),output};json(path.join(DATA,'versions',id+'.json'),v);return v;}
 const activeProjectFile=path.join(DATA,'project.json'),UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const materials=createMaterialStore({data:DATA,probe,write:json});
@@ -63,11 +67,11 @@ function resolveCanvasAsset(id){
  const reference=String(id).match(/^(mv|edit|audio):([a-f0-9-]{36})$/);if(reference){const[kind,identifier]=reference.slice(1);let record,file;if(kind==='mv'){const ai=aiMV.get(identifier),legacy=read(path.join(DATA,'jobs',identifier,'job.json'));record=ai?.status==='ready'?ai.generated:legacy?.status==='ready'?legacy.project?.generated:null;file=path.join(DATA,'jobs',identifier,'mv.mp4');if(record?.url!==`/files/jobs/${identifier}/mv.mp4`)record=null;}if(kind==='edit'){record=canvasEditor.get(identifier);file=path.join(DATA,'canvas-edits',identifier,'video.mp4');}if(kind==='audio'){record=canvasAudio.get(identifier);file=path.join(DATA,'canvas-audio',identifier,'audio.wav');}if(record?.sha256&&fs.existsSync(file)){const stat=fs.lstatSync(file);if(stat.isFile()&&!stat.isSymbolicLink()&&sha(fs.readFileSync(file))===record.sha256)return{file,kind:kind==='audio'?'audio':'video'};}}
  throw Error('找不到已登记的本地素材，请重新上传或选择');
 }
-function toolMaterials(id,items,namespace){
+async function toolMaterials(id,items,namespace){
  const directory=path.join(DATA,'canvas-output-materials');fs.mkdirSync(directory,{recursive:true});const file=path.join(directory,namespace+'-'+id+'.json'),saved=read(file,{materials:[]});
  const sources=items.map(({file,name})=>({file,name,bytes:fs.readFileSync(file)})),signature=sha(Buffer.from(JSON.stringify(sources.map(x=>({name:x.name,sha256:sha(x.bytes)})))));
  if(saved.signature===signature&&saved.materials.length===items.length&&saved.materials.every(m=>materials.get(m.id)?.sha256===m.sha256))return saved.materials;
- const result=sources.map(({name,bytes})=>materials.upload(name,bytes));json(file,{id,namespace,signature,materials:result});return result;
+ const result=[];for(const {name,bytes} of sources)result.push(await materials.upload(name,bytes));json(file,{id,namespace,signature,materials:result});return result;
 }
 const templateReferenceImports=new Map();
 async function importTemplateReference(templateId,kind,index){
@@ -79,13 +83,17 @@ async function importTemplateReference(templateId,kind,index){
  if(templateReferenceImports.has(signature))return await templateReferenceImports.get(signature);
  const task=(async()=>{let target=url,response;for(let redirects=0;redirects<4;redirects++){if(target.protocol!=='https:'||target.username||target.password||target.port&&!['443'].includes(target.port)||!['api.oiioii.ai','res.oiioii.tv'].includes(target.hostname))throw Error('模板示例跳转地址不在已核实的公开素材来源');response=await fetch(target,{redirect:'manual',signal:AbortSignal.timeout(45000)});if([301,302,303,307,308].includes(response.status)){const next=response.headers.get('location');if(response.body)await response.body.cancel();if(!next)throw Error('模板示例跳转信息不完整');target=new URL(next,target);response=null;continue;}break;}if(!response?.ok)throw Error('模板示例素材当前无法下载，可上传自己的参考素材');const limit=kind==='image'?10e6:80e6,chunks=[];let size=0;
  for await(const chunk of response.body){size+=chunk.length;if(size>limit)throw Error('模板示例素材超过当前导入大小限制');chunks.push(Buffer.from(chunk));}
- const material=materials.upload(`${template.name} · 参考${index+1}${extension}`,Buffer.concat(chunks));json(file,{material,source:'OiiOii公开模板参考',template_id:template.id});return material;})();templateReferenceImports.set(signature,task);try{return await task;}finally{templateReferenceImports.delete(signature);}
+ const material=await materials.upload(`${template.name} · 参考${index+1}${extension}`,Buffer.concat(chunks));json(file,{material,source:'OiiOii公开模板参考',template_id:template.id});return material;})();templateReferenceImports.set(signature,task);try{return await task;}finally{templateReferenceImports.delete(signature);}
 }
 const canvasProjects=createCanvasProjects({data:DATA,validate:project=>{validateProject(project);getOutputFormat(project.studio?.ratio);validateCanvasDrawings(project.studio?.canvasDrawings??[]);return true;},write:json});
 // The bridge also activates imported/reused songs. Register its active snapshot
 // before writing either active-project or song-cache files, including on import.
-const musicBridge=createMusicBridge({data:DATA,probe,waveform,write:(file,value)=>{
- if(file===activeProjectFile){validateServerProject(value);const record=canvasProjects.save(value);value.title=record.project.title;}
+const musicBridge=createMusicBridge({data:DATA,probe,waveform,resolveProject:project=>{
+ const record=canvasProjects.get(project.id,{includeArchived:true});
+ if(record?.archivedAt){const error=Error('画布已归档，请先恢复');error.status=409;throw error;}
+ return record?.project||project;
+},write:(file,value)=>{
+ if(file===activeProjectFile){validateServerProject(value,{allowEmptyCanvas:true});const record=canvasProjects.save(value);value.title=record.project.title;value.canvasRevision=record.revision;}
  json(file,value);
 },version});
 let legacyDraftId,canvasAssistant;
@@ -101,8 +109,9 @@ function walkValues(value,visit){
  else if(Array.isArray(value))for(const item of value)walkValues(item,visit);
  else if(value&&typeof value==='object')for(const item of Object.values(value))walkValues(item,visit);
 }
-function validateServerProject(project){
- validateProject(project);getOutputFormat(project.studio?.ratio);audioPath(project.source);
+function validateServerProject(project,{allowEmptyCanvas=false}={}){
+ validateProject(project);getOutputFormat(project.studio?.ratio);
+ if(!(allowEmptyCanvas&&project.studio?.freeCanvas===true&&project.source.id==='sample'))audioPath(project.source);
  const sourceUrl=project.source.id==='sample'?'/assets/sample-song.mp3':'/files/uploads/'+project.source.id;
  if(!Number.isFinite(project.source.duration)||project.source.duration<3||project.source.duration>1200||![sourceUrl,'/mv'+sourceUrl].includes(project.source.url))throw Error('音乐来源地址或时长无效，请重新选择音乐');
  if(project.generated!=null&&(typeof project.generated.url!=='string'||!/^\/(?:mv\/)?files\/jobs\/[a-f0-9-]{36}\/mv\.mp4$/.test(project.generated.url)))throw Error('成片引用无效');
@@ -122,15 +131,15 @@ function normalizedProject(input){
  return project;
 }
 function persistProject(input){const project=normalizedProject(input);musicBridge.persist(project);return project;}
-function projectResponse(record){let wave=[];try{wave=waveform(audioPath(record.project.source));}catch{}return{record,project:record.project,waveform:wave};}
+async function projectResponse(record){let wave=[];try{wave=await waveform(audioPath(record.project.source));}catch{}return{record,project:record.project,waveform:wave};}
 function requiredCanvas(id,includeArchived=false){const record=canvasProjects.get(id,{includeArchived});if(!record){const archived=canvasProjects.get(id,{includeArchived:true});const e=Error(archived?'画布已归档，请先恢复':'找不到可用的画布项目');e.status=archived?409:404;throw e;}return record;}
 function detachedProject(input){
- const project=clone(input);project.id=uid();
+ const project=clone(input);project.id=uid();delete project.canvasRevision;
  if(project.musicHandoff){project.studio||={};project.studio.originMusicSnapshot={...clone(project.musicHandoff),mv_project_id:input.id};}
  delete project.musicHandoff;return project;
 }
 function syncRenamedProject(record){
- validateServerProject(record.project);
+ validateServerProject(record.project,{allowEmptyCanvas:true});
  if(read(activeProjectFile)?.id===record.id)musicBridge.persist(record.project);
  else if(record.project.musicHandoff)json(path.join(DATA,'music-projects',record.project.musicHandoff.id+'.json'),record.project);
 }
@@ -160,15 +169,15 @@ function storeJob(j){const {process:_,...safe}=j;json(path.join(DATA,'jobs',j.id
 function cancel(j,reason='已停止，完成的历史版本仍保留'){if(!j||['ready','failed','cancelled'].includes(j.status))return;j.status='cancelled';j.message=reason;if(j.process)j.process.kill('SIGTERM');storeJob(j);}
 for(const d of fs.readdirSync(path.join(DATA,'jobs'))){const j=read(path.join(DATA,'jobs',d,'job.json'));if(j&&!['ready','failed','cancelled'].includes(j.status)){j.status='cancelled';j.message='服务重启后停止了未完成任务，可手动重试。';json(path.join(DATA,'jobs',d,'job.json'),j);}}
 const leases=setInterval(()=>{for(const j of tasks.values())if(!['ready','failed','cancelled'].includes(j.status)&&Date.now()-j.heartbeat>20000)cancel(j,'页面连接已断开，本次制作停止；可从历史版本继续。');},4000);leases.unref();
-function clientJob(j){return{id:j.id,status:j.status,received:j.received,total:j.total,progress:j.progress||0,message:j.message||'',url:j.url,versionId:j.versionId,error:j.error,dimensions:j.dimensions,projectId:j.project.id,generated:j.status==='ready'?j.project.generated:undefined};}
+function clientJob(j){return{id:j.id,status:j.status,received:j.received,total:j.total,progress:j.progress||0,message:j.message||'',url:j.url,versionId:j.versionId,error:j.error,dimensions:j.dimensions,projectId:j.project.id,canvasRevision:j.project.canvasRevision,saveConflict:!!j.saveConflict,generated:j.status==='ready'?j.project.generated:undefined};}
 function encode(j){
  j.status='encoding';j.progress=90;j.message='合成原曲与字幕';storeJob(j);
  const p=j.project,folder=path.join(DATA,'jobs',j.id),target=path.join(folder,'mv.mp4');
  const proc=spawn(ff,['-y','-v','error','-framerate','24','-i',path.join(folder,'frame-%05d.jpg'),'-ss',String(p.start),'-i',audioPath(p.source),'-map','0:v:0','-map','1:a:0','-t',String(p.duration),'-c:v','libx264','-preset','fast','-crf','20','-pix_fmt','yuv420p','-c:a','aac','-b:a','192k','-movflags','+faststart','-progress','pipe:1',target],{stdio:['ignore','pipe','pipe']});j.process=proc;let err='';
  proc.stderr.on('data',b=>{err=(err+b).slice(-5000)});proc.stdout.on('data',b=>{const m=String(b).match(/out_time_us=(\d+)/);if(m)j.progress=Math.min(99,90+9*Number(m[1])/1e6/p.duration)});
  proc.on('error',()=>{j.status='failed';j.error='视频编码器无法启动，请检查本地FFmpeg。';storeJob(j)});
- proc.on('close',code=>{delete j.process;if(j.status==='cancelled')return;if(code!==0){j.status='failed';j.error='视频合成失败，已保留当前方案，可手动重试。';fs.writeFileSync(path.join(folder,'encode.log'),err);storeJob(j);return;}
-  try{const info=probe(target),v=info.streams.find(x=>x.codec_type==='video'),a=info.streams.find(x=>x.codec_type==='audio');if(!v||!a||Number(v.nb_frames)!==j.total)throw Error('成片轨道或帧数不完整');const dimensions=validateOutputDimensions(j.dimensions?.ratio||p.studio?.ratio,v.width,v.height);if(j.dimensions&&(dimensions.width!==j.dimensions.width||dimensions.height!==j.dimensions.height))throw Error('制作任务尺寸不一致');p.generated={url:`/files/jobs/${j.id}/mv.mp4`,sha256:sha(fs.readFileSync(target)),duration:p.duration,dimensions};persistProject(p);const vSaved=version(p,'生成代码MV',p.generated);j.versionId=vSaved.id;json(path.join(folder,'ffprobe.json'),info);j.status='ready';j.progress=100;j.url=p.generated.url;for(const name of fs.readdirSync(folder))if(/^frame-\d+\.jpg$/.test(name))fs.unlinkSync(path.join(folder,name));storeJob(j);}catch{j.status='failed';j.error='成片检查未通过，可从当前方案手动重试。';storeJob(j);}
+ proc.on('close',async code=>{delete j.process;if(j.status==='cancelled')return;if(code!==0){j.status='failed';j.error='视频合成失败，已保留当前方案，可手动重试。';fs.writeFileSync(path.join(folder,'encode.log'),err);storeJob(j);return;}
+  try{const info=await probe(target),v=info.streams.find(x=>x.codec_type==='video'),a=info.streams.find(x=>x.codec_type==='audio');if(!v||!a||Number(v.nb_frames)!==j.total)throw Error('成片轨道或帧数不完整');const dimensions=validateOutputDimensions(j.dimensions?.ratio||p.studio?.ratio,v.width,v.height);if(j.dimensions&&(dimensions.width!==j.dimensions.width||dimensions.height!==j.dimensions.height))throw Error('制作任务尺寸不一致');p.generated={url:`/files/jobs/${j.id}/mv.mp4`,sha256:sha(fs.readFileSync(target)),duration:p.duration,dimensions};const vSaved=version(p,'生成代码MV',p.generated);j.versionId=vSaved.id;try{p.canvasRevision=persistProject(p).canvasRevision;}catch(error){if(error.status!==409)throw error;j.saveConflict=true;j.message='成片已保留在历史版本中；画布有更新，未覆盖其他页面的编辑。';}json(path.join(folder,'ffprobe.json'),info);j.status='ready';j.progress=100;j.url=p.generated.url;for(const name of fs.readdirSync(folder))if(/^frame-\d+\.jpg$/.test(name))fs.unlinkSync(path.join(folder,name));storeJob(j);}catch{j.status='failed';j.error='成片检查未通过，可从当前方案手动重试。';storeJob(j);}
  });
 }
 async function body(req,max=2e6){let size=0,arr=[];for await(const b of req){size+=b.length;if(size>max){const e=Error('文件或请求过大');e.status=413;throw e;}arr.push(b);}return Buffer.concat(arr);}
@@ -185,11 +194,11 @@ async function enrich(p){
  for(const [i,x]of d.shots.entries()){if(x.id!==i+1||!['wide','medium','close'].includes(x.camera)||typeof x.caption!=='string'||x.caption.length>90||!Number.isFinite(x.warm)||x.warm<0||x.warm>1)throw Error('镜头内容校验未通过，原方案仍保留。');Object.assign(next.plan.shots[i],{caption:x.caption,camera:x.camera,warm:x.warm});}
  next.planningSource='deepseek';if(typeof d.summary==='string')next.plan.summary=d.summary.slice(0,160);validateProject(next);return next;
 }
-export function createServer(){return http.createServer(async(req,res)=>{
+export function createServer({media=mediaProcessing}={}){const {probe,waveform}=media;return http.createServer(async(req,res)=>{
  const send=(code,data)=>{res.writeHead(code,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(data))};
  try{
   const u=new URL(req.url,'http://127.0.0.1'),route=u.pathname,method=req.method;
-  if(req.headers.origin&&new URL(req.headers.origin).host!==req.headers.host&&method!=='GET')return send(403,{error:'请从当前本地页面操作'});
+  if(!localRequestAllowed(req))return send(403,{error:'请从当前本机 Osmanthus 地址操作'});
   if(method==='GET'&&route==='/api/capabilities')return send(200,{...capability(),sampleWave});
   if(method==='POST'&&route==='/api/canvas/generation'){
    const {project,...input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);return send(202,{job:canvasGeneration.submit({...input,project_id:project.id})});
@@ -199,14 +208,14 @@ export function createServer(){return http.createServer(async(req,res)=>{
   if(method==='POST'&&route==='/api/canvas/analyze'){const {project,request_id,prompt,references}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);return send(200,await canvasPrompts.compile({request_id,prompt:prompt||'反推参考图的创作提示词',references,reverse:true}));}
   if(method==='POST'&&route==='/api/canvas/template-reference'){const {project,template_id,kind='image',index=0}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);if(!Number.isInteger(index)||index<0||index>100)throw Error('参考素材序号无效');return send(201,{material:await importTemplateReference(template_id,kind,index)});}
   if(method==='POST'&&route==='/api/canvas/vision'){
-   const {project,...input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);const job=await canvasVision.process(input);const registered=toolMaterials(job.id,job.outputs.map(output=>({file:canvasVision.asset(job.id,output.filename).file,name:`${input.operation}-${output.role||output.filename}.png`})),'vision');
+   const {project,...input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);const job=await canvasVision.process(input);const registered=await toolMaterials(job.id,job.outputs.map(output=>({file:canvasVision.asset(job.id,output.filename).file,name:`${input.operation}-${output.role||output.filename}.png`})),'vision');
    return send(200,{job,materials:registered});
   }
   if(method==='POST'&&route==='/api/canvas/edit'){
-   const {project,...input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);const job=await canvasEditor.render({...input,project_id:project.id});let registered=[];if(job.status==='ready')registered=toolMaterials(job.id,[{file:path.join(DATA,'canvas-edits',job.id,'video.mp4'),name:'Osmanthus-剪辑-'+job.id.slice(0,8)+'.mp4'}],'edit');return send(200,{job,materials:registered});
+   const {project,...input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);const job=await canvasEditor.render({...input,project_id:project.id});let registered=[];if(job.status==='ready')registered=await toolMaterials(job.id,[{file:path.join(DATA,'canvas-edits',job.id,'video.mp4'),name:'Osmanthus-剪辑-'+job.id.slice(0,8)+'.mp4'}],'edit');return send(200,{job,materials:registered});
   }
   if(method==='POST'&&(route==='/api/canvas/extract-audio'||route==='/api/canvas/transcribe')){
-   const {project,...input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);const job=await canvasAudio[route.endsWith('transcribe')?'transcribe':'extract']({...input,project_id:project.id});let registered=[];if(job.status==='ready')registered=toolMaterials(job.id,[{file:path.join(DATA,'canvas-audio',job.id,'audio.wav'),name:'Osmanthus-'+(route.endsWith('transcribe')?'字幕原声':'分离原声')+'.wav'}],'audio');return send(200,{job,materials:registered});
+   const {project,...input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);const job=await canvasAudio[route.endsWith('transcribe')?'transcribe':'extract']({...input,project_id:project.id});let registered=[];if(job.status==='ready')registered=await toolMaterials(job.id,[{file:path.join(DATA,'canvas-audio',job.id,'audio.wav'),name:'Osmanthus-'+(route.endsWith('transcribe')?'字幕原声':'分离原声')+'.wav'}],'audio');return send(200,{job,materials:registered});
   }
   if(method==='POST'&&route==='/api/mv-director/open'){
    const {project_id}=JSON.parse(await body(req));const p=requiredCanvas(project_id).project;validateServerProject(p);return send(200,{session:mvDirector.open(p)});
@@ -215,7 +224,7 @@ export function createServer(){return http.createServer(async(req,res)=>{
    const {session_id}=JSON.parse(await body(req)),s=mvDirector.get(session_id);if(!s)return send(404,{error:'找不到MV方案'});
    const project=clone(requiredCanvas(s.project_id).project);validateServerProject(project);let canvas=createCanvasDocument(project.studio?.canvas||{});
    const nodes=[];for(const item of s.plan?[...s.plan.characters,...s.plan.scenes,...s.plan.shots]:[]){const p=s.previews[item.id],material=p&&materials.get(p.materialId);if(material)nodes.push({id:'director-'+p.imageId,type:'image',title:item.name,content:item.description,asset:{id:material.id,url:material.url,name:material.name}});}
-   if(s.generated){const asset=mvDirector.asset(s.generated.id);if(asset){const media=toolMaterials(s.generated.id,[{file:asset.file,name:s.title+'-MV.mp4'}],'director')[0];nodes.push({id:'director-movie-'+s.generated.id,type:'video',title:s.title+' · MV',asset:{id:media.id,url:media.url,name:media.name,duration:s.generated.duration}});}}
+   if(s.generated){const asset=mvDirector.asset(s.generated.id);if(asset){const media=(await toolMaterials(s.generated.id,[{file:asset.file,name:s.title+'-MV.mp4'}],'director'))[0];nodes.push({id:'director-movie-'+s.generated.id,type:'video',title:s.title+' · MV',asset:{id:media.id,url:media.url,name:media.name,duration:s.generated.duration}});}}
    const offset=canvas.nodes.reduce((max,n)=>Math.max(max,n.y+n.height),0)+80;
    for(const [i,node] of nodes.entries())if(!canvas.nodes.some(n=>n.id===node.id))canvas=addNode(canvas,{...node,x:(i%4)*380,y:offset+Math.floor(i/4)*310});
    project.studio={...project.studio,canvas,freeCanvas:true,directorSession:s.id,ratio:s.ratio||project.studio?.ratio||'16:9'};persistProject(project);
@@ -245,12 +254,14 @@ export function createServer(){return http.createServer(async(req,res)=>{
   }
   const aiJobRoute=route.match(/^\/api\/ai-mv\/jobs\/([a-f0-9-]{36})$/);
   if(method==='GET'&&aiJobRoute){const job=aiMV.get(aiJobRoute[1]);return job?send(200,{job}):send(404,{error:'找不到AI视频任务'});}
-  if(method==='GET'&&route==='/api/project'){const project=read(path.join(DATA,'project.json'));let wave=[];try{if(project)wave=waveform(audioPath(project.source));}catch{}return send(200,{project,waveform:wave});}
+  if(method==='GET'&&route==='/api/project'){const cached=read(activeProjectFile),record=cached&&canvasProjects.get(cached.id,{includeArchived:true}),project=record?(record.archivedAt?null:record.project):cached;let wave=[];try{if(project)wave=await waveform(audioPath(project.source));}catch{}return send(200,{project,waveform:wave});}
   if((method==='PUT'||method==='POST')&&route==='/api/project'){const project=persistProject(JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES)));return send(200,{saved:true,project,record:canvasProjects.get(project.id)});}
   if(method==='GET'&&route==='/api/materials')return send(200,{materials:materials.list()});
   if(method==='POST'&&route==='/api/materials'){
+   const release=media.admitUpload();try{
    const name=decodeURIComponent(req.headers['x-filename']||''),bytes=await body(req,Math.max(...Object.values(MATERIAL_LIMITS)));
-   return send(201,{material:materials.upload(name,bytes)});
+   return send(201,{material:await materials.upload(name,bytes)});
+   }finally{release();}
   }
   const materialRoute=route.match(/^\/api\/materials\/([a-f0-9-]{36})(?:\/(use-audio))?$/);
   if(materialRoute){
@@ -261,7 +272,7 @@ export function createServer(){return http.createServer(async(req,res)=>{
    if(method==='POST'&&operation==='use-audio'){
     if(material.kind!=='audio')return send(400,{error:'请选择音频素材作为MV音乐'});
     if(material.duration<3||material.duration>1200)return send(400,{error:'当前支持3秒至20分钟的音频'});
-    const {project:input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(input);
+    const {project:input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(input,{allowEmptyCanvas:true});
     let project=detachedProject(input);const source=materials.asset(id),bytes=fs.readFileSync(source.file);
     if(sha(bytes)!==material.sha256)return send(409,{error:'音频素材已改变，请重新选择'});
     const sourceId=uid()+path.extname(source.file),file=path.join(DATA,'uploads',sourceId);
@@ -270,7 +281,7 @@ export function createServer(){return http.createServer(async(req,res)=>{
      project=resizePlan(project,Math.min(180,material.duration,project.duration),0);
      project.source={id:sourceId,url:'/files/uploads/'+sourceId,name:material.name,duration:material.duration};
      project.lyrics=[];project.manualLyrics='';project.generated=null;project.planningSource='preset';project.studio||={};project.studio.freeCanvas=false;
-     project=persistProject(project);return send(200,projectResponse(canvasProjects.get(project.id)));
+     project=persistProject(project);return send(200,await projectResponse(canvasProjects.get(project.id)));
     }catch(error){if(!fs.existsSync(path.join(DATA,'canvas-projects',project.id+'.json')))fs.unlinkSync(file);throw error;}
    }
   }
@@ -278,20 +289,20 @@ export function createServer(){return http.createServer(async(req,res)=>{
   if(method==='POST'&&(route==='/api/canvas-projects'||route==='/api/canvas-projects/import')){
    const {project:input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
    const project=persistProject(route.endsWith('/import')?detachedProject(input):input);
-   return send(201,projectResponse(canvasProjects.get(project.id)));
+   return send(201,await projectResponse(canvasProjects.get(project.id)));
   }
   const canvasRoute=route.match(/^\/api\/canvas-projects\/([a-f0-9-]{36})(?:\/(open|rename|duplicate|archive|restore))?$/);
   if(canvasRoute){
    const id=canvasRoute[1],operation=canvasRoute[2];
-   if(method==='GET'&&!operation)return send(200,projectResponse(requiredCanvas(id,u.searchParams.get('archived')==='1')));
+   if(method==='GET'&&!operation)return send(200,await projectResponse(requiredCanvas(id,u.searchParams.get('archived')==='1')));
    if(method==='POST'&&operation){
     const payload=JSON.parse(await body(req));let record;
     if(operation==='open'){const saved=requiredCanvas(id);persistProject(saved.project);record=canvasProjects.get(id);}
-    if(operation==='rename'){validateServerProject(requiredCanvas(id).project);record=canvasProjects.rename(id,payload.title);syncRenamedProject(record);}
+    if(operation==='rename'){validateServerProject(requiredCanvas(id).project,{allowEmptyCanvas:true});record=canvasProjects.rename(id,payload.title,{revision:payload.revision});syncRenamedProject(record);}
     if(operation==='duplicate')record=canvasProjects.duplicate(id,payload);
-    if(operation==='archive')record=canvasProjects.archive(id);
-    if(operation==='restore')record=canvasProjects.restore(id);
-    return send(operation==='duplicate'?201:200,projectResponse(record));
+    if(operation==='archive')record=canvasProjects.archive(id,{revision:payload.revision});
+    if(operation==='restore')record=canvasProjects.restore(id,{revision:payload.revision});
+    return send(operation==='duplicate'?201:200,await projectResponse(record));
    }
   }
   if(method==='POST'&&route==='/api/canvas-assist'){
@@ -300,7 +311,7 @@ export function createServer(){return http.createServer(async(req,res)=>{
    return send(200,await canvasAssistant.assist(JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES))));
   }
   if(method==='GET'&&route==='/api/versions'){const arr=fs.readdirSync(path.join(DATA,'versions')).filter(x=>x.endsWith('.json')).map(x=>read(path.join(DATA,'versions',x))).filter(Boolean).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));return send(200,{versions:arr});}
-  if(method==='POST'&&route==='/api/versions'){const {project,label,output}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);if(output&&JSON.stringify(output)!==JSON.stringify(project.generated))return send(400,{error:'历史成片与当前工程不一致'});return send(201,{version:version(project,String(label||'保存方案').slice(0,100),output||null)});}
+  if(method==='POST'&&route==='/api/versions'){const {project,label,output}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project,{allowEmptyCanvas:true});if(output&&JSON.stringify(output)!==JSON.stringify(project.generated))return send(400,{error:'历史成片与当前工程不一致'});return send(201,{version:version(project,String(label||'保存方案').slice(0,100),output||null)});}
   if(method==='POST'&&route==='/api/plan'){
    if(!key)return send(503,{error:'故事助手尚未配置，当前可以使用已准备好的故事方案。'});
    const {project}=JSON.parse(await body(req));validateServerProject(project);
@@ -309,9 +320,11 @@ export function createServer(){return http.createServer(async(req,res)=>{
   if(method==='POST'&&route==='/api/music-import'){const {handoff_id}=JSON.parse(await body(req));return send(200,await musicBridge.importMusic(handoff_id));}
   if(method==='POST'&&route==='/api/import-link')return send(501,{error:'平台分享链接的解析通道尚未接通。当前请上传音频，或从示例开始。'});
   if(method==='POST'&&route==='/api/upload'){
+   const release=media.admitUpload();try{
    const ext=path.extname(decodeURIComponent(req.headers['x-filename']||'')).toLowerCase();if(!['.mp3','.wav','.m4a','.aac','.flac','.ogg','.opus'].includes(ext))return send(400,{error:'请上传MP3、WAV、M4A、AAC、FLAC或OGG音频'});
-   const b=await body(req,80e6),id=uid()+ext,file=path.join(DATA,'uploads',id);fs.writeFileSync(file,b);let info;try{info=probe(file);if(!info.streams.some(x=>x.codec_type==='audio'))throw Error();}catch{fs.unlinkSync(file);return send(400,{error:'文件无法识别为有效音频，请换一个文件'});}
-   const duration=Number(info.format.duration);if(!Number.isFinite(duration)||duration<3||duration>1200){fs.unlinkSync(file);return send(400,{error:'当前支持3秒至20分钟的音频'});}return send(201,{source:{id,url:'/files/uploads/'+id,name:decodeURIComponent(req.headers['x-filename']),duration},waveform:waveform(file)});
+   const b=await body(req,80e6),id=uid()+ext,file=path.join(DATA,'uploads',id);fs.writeFileSync(file,b);let info;try{info=await probe(file);if(!info.streams.some(x=>x.codec_type==='audio'))throw Error();}catch(error){fs.unlinkSync(file);if(error.code==='MEDIA_BUSY')throw error;return send(400,{error:'文件无法识别为有效音频，请换一个文件'});}
+   const duration=Number(info.format.duration);if(!Number.isFinite(duration)||duration<3||duration>1200){fs.unlinkSync(file);return send(400,{error:'当前支持3秒至20分钟的音频'});}return send(201,{source:{id,url:'/files/uploads/'+id,name:decodeURIComponent(req.headers['x-filename']),duration},waveform:await waveform(file).catch(()=>[])});
+   }finally{release();}
   }
   if(method==='POST'&&route==='/api/render'){
    if(!capability().freeRender)return send(503,{error:'本地视频编码器暂不可用，仍可预览分镜'});const {project:input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));const project=normalizedProject(input);validateServerProject(project);const dimensions=getOutputFormat(project.studio?.ratio);
