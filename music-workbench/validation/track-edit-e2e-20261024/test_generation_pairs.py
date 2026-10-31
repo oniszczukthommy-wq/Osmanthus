@@ -1,5 +1,5 @@
 """Offline lifecycle tests. Mocked audio is not musical evidence."""
-import copy, json, tempfile, time, unittest, uuid
+import copy, json, tempfile, time, unittest, uuid, threading
 from pathlib import Path
 from contextlib import ExitStack
 from types import SimpleNamespace
@@ -19,6 +19,7 @@ class PairTests(unittest.TestCase):
         self.work=w.Workflow();self.service=gp.GenerationPairs(self.work,self.root/'batches')
         self.body={'request_id':str(uuid.uuid4()),'brief':'周末向海边出发的轻松歌曲','style':'R&B','voice':'成熟自然男声'}
         self.launch=self.stack.enter_context(patch.object(self.work,'launch'))
+        self.queue=self.stack.enter_context(patch.object(self.service,'launch_sequence'))
 
     def batch(self):
         with patch.object(self.service,'launch_draft'):
@@ -54,6 +55,63 @@ class PairTests(unittest.TestCase):
         self.assertIn(a['prompt'],c['prompt']);self.assertIn(self.body['voice'],a['prompt'])
         self.assertNotIn('unused detailed planner result',a['prompt'])
         self.assertFalse(a['selected_for_preparation']);self.assertFalse(c['selected_for_preparation'])
+
+    def test_first_song_only_until_provider_complete_even_when_stream_exists(self):
+        b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
+        self.assertEqual(c['stage'],'queued');self.queue.assert_called_once_with(b)
+        self.service.schedule_candidates(b)
+        self.assertEqual([x.args[0]['id'] for x in self.launch.call_args_list],[a['id']])
+        a.update(status='stream',pipe_url='https://example.test/stream')
+        self.assertFalse(self.service.release_second(b));self.assertNotIn('second_released_at',b)
+        self.launch.reset_mock();a.update(status='done',audio_url='https://example.test/final.mp3')
+        self.assertTrue(self.service.release_second(b));self.launch.assert_called_once_with(c)
+        self.assertFalse(a['download_ready']);self.assertIsNotNone(b['second_released_at'])
+
+    def test_queued_restart_waits_but_existing_submitted_second_is_resumed(self):
+        b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
+        a.update(submission_started=True,task_id='running-first');w.STREAM.persist(a)
+        work=w.Workflow();service=gp.GenerationPairs(work,self.root/'batches')
+        with patch.object(work,'launch') as launch,patch.object(service,'launch_sequence') as queue:
+            service.recover();self.assertEqual([x.args[0]['id'] for x in launch.call_args_list],[a['id']]);queue.assert_called_once()
+            second=work.jobs[c['id']];second.update(submission_started=True,task_id='already-running-second')
+            launch.reset_mock();service.resume(b['id'])
+            self.assertEqual([x.args[0]['id'] for x in launch.call_args_list],[a['id'],c['id']])
+
+    def test_first_failure_does_not_leave_second_stuck(self):
+        b=self.batch();a=self.work.jobs[b['candidate_ids']['A']]
+        a.update(stage='error',status='error',task_id='failed-first')
+        a['events'].append({'type':'provider_status','status':'fail'})
+        self.assertTrue(self.service.release_second(b))
+        self.launch.assert_called_once_with(self.work.jobs[b['candidate_ids']['B']])
+
+    def test_old_batches_keep_both_songs_and_legacy_recovery(self):
+        b=self.batch();b.pop('schedule');self.service.save(b)
+        self.service.schedule_candidates(b)
+        self.assertEqual([x.args[0]['id'] for x in self.launch.call_args_list],list(b['candidate_ids'].values()))
+
+    def test_background_sequence_releases_second_before_first_download_without_duplicate_work(self):
+        b=self.batch();first_started=threading.Event();allow_complete=threading.Event();second_started=threading.Event();calls=[]
+        def provider(job):
+            calls.append(job['candidate_slot']);job['task_id']='offline-'+job['candidate_slot'];job['submission_started']=True
+            if job['candidate_slot']=='A':
+                first_started.set();allow_complete.wait(3)
+                job.update(status='done',audio_url='https://example.test/complete.mp3')
+                second_started.wait(3)  # First download is deliberately still incomplete.
+            else:
+                self.assertFalse(self.work.jobs[b['candidate_ids']['A']]['download_ready']);second_started.set()
+            (self.runs/job['id']/'complete.mp3').write_bytes(b'isolated fixture')
+            job.update(status='done',download_ready=True)
+        try:
+            with patch.object(w.STREAM,'worker',side_effect=provider),patch.object(self.work,'launch',wraps=w.Workflow.launch.__get__(self.work)),patch.object(self.service,'launch_sequence',wraps=gp.GenerationPairs.launch_sequence.__get__(self.service)):
+                self.service.schedule_candidates(b)
+                self.assertTrue(first_started.wait(2));self.assertEqual(calls,['A']);self.assertTrue(self.work.creation_busy())
+                self.service.resume(b['id']);self.assertEqual(calls,['A'])
+                allow_complete.set();self.assertTrue(second_started.wait(2))
+                deadline=time.monotonic()+2
+                while self.work.running and time.monotonic()<deadline:time.sleep(.01)
+                self.assertFalse(self.work.running);self.service.resume(b['id']);self.assertEqual(calls,['A','B'])
+        finally:
+            allow_complete.set();second_started.set();self.service.stopping.set()
 
     def test_same_request_replays_and_changed_body_rejected(self):
         with patch.object(self.service,'launch_draft') as call:

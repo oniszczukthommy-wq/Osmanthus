@@ -218,3 +218,9 @@ html,body{margin:0;min-height:100%;background:#000}#os-mix-28{--studio-sidebar-w
 #os-mix-28 .studio-detail-copy .studio-detail-lyrics{position:relative;height:300px;max-height:40dvh;overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;margin:0;padding:16px 0;white-space:normal;scroll-padding:80px}
 #os-mix-28 .studio-detail-lyrics [data-lyric-index]{padding:6px 10px;margin:0;min-height:33px;border-radius:8px;transition:background .18s,color .18s}
 #os-mix-28 .studio-detail-lyrics .is-active{background:#3d333c;color:#f4dfc3;font-weight:600}
+
+/* Quiet waiting states: keep motion and accessibility without provider-stage text. */
+#os-mix-28 [data-batch-status]:empty,#os-mix-28 [data-candidate-status]:empty,#os-mix-28 #studio-review-status:empty{display:none}
+#os-mix-28 #studio-lyric-approval[aria-busy=true]::after{content:"";display:block;width:24px;height:24px;margin:18px auto;border:2px solid #fff3;border-top-color:#e8c9a4;border-radius:50%;animation:os-record-turn .8s linear infinite}
+#os-mix-28 button[aria-busy=true]::after{content:"";display:inline-block;width:14px;height:14px;margin-left:8px;border:2px solid #fff3;border-top-color:currentColor;border-radius:50%;animation:os-record-turn .8s linear infinite}
+#os-mix-28 [data-rs=create][aria-busy=true] svg{display:none}

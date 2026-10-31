@@ -22,6 +22,7 @@ class CreationFlowTests(unittest.TestCase):
         self.flow=CreationFlow(self.pairs,self.drafts,self.root/'creation')
         self.launch=self.stack.enter_context(patch.object(self.work,'launch'))
         self.pair_launch=self.stack.enter_context(patch.object(self.pairs,'launch_draft'))
+        self.sequence=self.stack.enter_context(patch.object(self.pairs,'launch_sequence'))
         self.lyric_launch=self.stack.enter_context(patch.object(self.drafts,'launch'))
         self.body={'request_id':str(uuid.uuid4()),'mode':'simple','prompt':'雨停以后，第一班车驶向新的清晨，温暖的女声 R&B'}
 
@@ -47,7 +48,8 @@ class CreationFlowTests(unittest.TestCase):
         saved=json.loads((self.root/'creation'/result['id']/'state.json').read_text())
         self.assertEqual(saved['state'],'accepted');self.assertNotIn('confirmed',json.dumps(saved))
         batch,writer=self.complete_planning(result['id']);self.assertEqual(writer.call_count,1)
-        self.assertEqual(len(batch['candidate_ids']),2);self.assertEqual(self.launch.call_count,2)
+        self.assertEqual(len(batch['candidate_ids']),2);self.assertEqual(self.launch.call_count,1)
+        self.sequence.assert_called_once_with(batch)
         self.assertEqual(len({self.work.jobs[x]['lyrics'] for x in batch['candidate_ids'].values()}),1)
         self.assertEqual(result['input']['voice'],AUTO_VOICE);self.assertEqual(result['input']['style'],'中文 R&B')
 

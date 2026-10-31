@@ -89,11 +89,14 @@ await test('empty-candidate failure renders real recovery button and disappears 
  await children['[data-batch-resume]'].onclick();assert.deepEqual(resumed,[id]);
  context.creations=[];vm.runInNewContext('renderBatches();',context);assert.equal(removed,true);assert.equal(nodes.size,0);
 });
-await test('stream, provider completion and full local download have distinct truthful progress',async()=>{
- assert.match(creationProgress({candidates:[{media:{stream:'/stream'}}]}),/已可试听/);
+await test('waiting stages stay quiet while playable results and errors remain visible',async()=>{
+ assert.match(creationProgress({candidates:[{media:{stream:'/stream'}}]}),/可试听/);
  assert.match(candidateProgress({media:{stream:'/stream'}},'正在生成'),/可试听/);
- assert.match(creationProgress({candidates:[{status:'done'}]}),/接收完整音频/);
- assert.match(creationProgress({candidates:[{media:{complete:'/a'}},{media:{complete:'/b'}}]}),/两版歌曲已生成/);
+ assert.equal(creationProgress({candidates:[{status:'done'}]}),'');
+ assert.equal(creationProgress({stage:'lyrics',candidates:[]}),'');
+ assert.equal(candidateProgress({stage:'queued'},'模型生成中'),'');
+ assert.equal(candidateProgress({stage:'generating'},'模型生成中'),'');
+ assert.match(creationProgress({candidates:[{media:{complete:'/a'}},{media:{complete:'/b'}}]}),/试听并选择/);
  assert.equal(creationProgress({error:'本次生成失败'}),'本次生成失败');
 });
 await test('real generate action persists one draft request and never submits music before approval',async()=>{

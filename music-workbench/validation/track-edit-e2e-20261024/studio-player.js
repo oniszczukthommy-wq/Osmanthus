@@ -267,7 +267,7 @@ export function initializeStudioPlayer(studio,{getSongs=()=>[],getSong=null,onSh
   if(document.activeElement!==volume)volume.value=Math.round(state.volume*100);volume.setAttribute('aria-valuetext',`${Math.round(state.volume*100)}%`);
   seek.disabled=!state.ready||busy||!state.duration;seek.max=state.duration||0;
   if(!scrubbing){seek.value=Math.min(state.duration,state.time)||0;q('[data-player-position]').textContent=clock(state.time);paintProgress(state.time,state.duration);}
-  seek.setAttribute('aria-valuetext',`${clock(state.time)}，共${clock(state.duration)}`);q('[data-player-duration]').textContent=state.kind==='preview'&&!state.duration&&song.media?.stream?'生成中':clock(state.duration);
+  seek.setAttribute('aria-valuetext',`${clock(state.time)}，共${clock(state.duration)}`);q('[data-player-duration]').textContent=state.kind==='preview'&&!state.duration&&song.media?.stream?'--:--':clock(state.duration);
   const text=studio.statusIsTransient?.(pendingMessage)?'':pendingMessage;q('[data-player-status]').hidden=!text;if(q('[data-player-status]').textContent!==text)q('[data-player-status]').textContent=text;
   const sk=JSON.stringify([state.id,state.kind,state.playing,busy]);if(sk!==stateKey){stateKey=sk;onStateChange?.({...state,busy});root.dispatchEvent(new CustomEvent('osmanthus:playback',{detail:{id:state.id,kind:state.kind,playing:state.playing,busy},bubbles:true}));}
   const ended=lastId===state.id&&lastPlaying&&!state.playing&&!manualPause&&!busy&&state.duration>0&&state.time>=state.duration-.08&&lastTime<state.duration;

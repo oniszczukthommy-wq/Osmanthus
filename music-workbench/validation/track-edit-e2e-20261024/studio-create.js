@@ -25,7 +25,7 @@ export function initializeCreateWorkspace(studio,{onHome=()=>{},onCreateView=()=
    }
   }
   for(const node of batchMount.querySelectorAll('[data-batch]')){const selected=!!batch&&node.dataset.batch===batch.id;node.hidden=!selected;visibleBatch ||= selected;}
-  draftEmpty.hidden=visibleDraft;draftEmpty.textContent=activeDraftId?'歌词正在准备中，请稍候。':'从首页写下歌曲想法，先准备一份歌词。';resultsEmpty.hidden=visibleBatch;
+  draftEmpty.hidden=visibleDraft;draftEmpty.textContent=activeDraftId?'':'从首页写下歌曲想法，先准备一份歌词。';resultsEmpty.hidden=visibleBatch;
   const currentStep=batch?.stage==='ready'&&batch.project_id?2:draft?.stage==='confirmed'?1:0;
   for(const [index,node] of [...workspace.querySelectorAll('[data-create-step]')].entries()){
    node.dataset.state=index<currentStep?'done':index===currentStep?'current':'next';

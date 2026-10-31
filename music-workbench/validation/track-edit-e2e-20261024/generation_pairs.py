@@ -6,6 +6,7 @@ import workflow as w
 
 BATCHES=w.ROOT/'workflow'/'batches'
 POLICY='dual-song-minimal-style-v1'
+SCHEDULE='first-complete-then-second-v1'
 
 def request_fields(body):
     identifier=body.get('request_id')
@@ -75,7 +76,7 @@ class GenerationPairs:
         self.workflow=workflow;self.lock=workflow.lock
         self.directory=Path(directory) if directory else BATCHES
         self.directory.mkdir(parents=True,exist_ok=True)
-        self.batches={};self.drafting=set()
+        self.batches={};self.drafting=set();self.waiting=set();self.stopping=threading.Event()
         for file in self.directory.glob('*/state.json'):
             try:
                 batch=json.loads(file.read_text())
@@ -142,7 +143,7 @@ class GenerationPairs:
             if self.workflow.creation_busy() or self.drafting:raise RuntimeError('已有生成或分轨任务，请等待完成')
             if not os.environ.get('YINCHAO_API_KEY') or (not fields.get('instrumental') and not fields.get('lyrics') and not os.environ.get('DEEPSEEK_API_KEY')):raise ValueError('本机生成服务尚未配置')
             batch={**fields,'id':identifier,'request_fingerprint':digest(fields),'created_at':time.time(),
-                'title':fields.get('title','器乐小景' if fields.get('instrumental') else '新歌曲'),'stage':'generating' if fields.get('instrumental') else 'lyrics','policy':POLICY,'model':'v4.5','events':[],
+                'title':fields.get('title','器乐小景' if fields.get('instrumental') else '新歌曲'),'stage':'generating' if fields.get('instrumental') else 'lyrics','policy':POLICY,'schedule':SCHEDULE,'model':'v4.5','events':[],
                 'candidate_ids':{},'attempts':{'A':[],'B':[]},'retry_requests':{},'selected_candidate_id':None,'error':None,
                 'requested_title':fields.get('title')}
             # A failed disk write must not leave a cached, non-durable batch that
@@ -166,7 +167,7 @@ class GenerationPairs:
                 'model':batch['model'],'lyrics':batch['lyrics'],**strategies[slot],
                 **({'instrumental':True} if batch.get('instrumental') else {}),
                 'voice_control':'text_timbre_prompt','voice_exact_identity':False,'project_id':identifier,
-                'created_at':now,'status':'pending','stage':'generating','origin':'dual_generation',
+                'created_at':now,'status':'pending','stage':'queued' if slot=='B' and batch.get('schedule')==SCHEDULE and not batch.get('second_released_at') else 'generating','origin':'dual_generation',
                 'events':[],'first_stream_seconds':None,'first_play_seconds':None,'done_seconds':None,
                 'download_ready':False,'buffering_events':0}
             self.workflow.jobs[identifier]=job;w.STREAM.persist(job)
@@ -183,13 +184,51 @@ class GenerationPairs:
                     batch['attempts']={slot:[identifier] for slot,identifier in batch['candidate_ids'].items()}
                 self.save(batch)  # Persist identities before creating any payable task.
                 self.ensure_candidates(batch)
-                for identifier in batch['candidate_ids'].values():self.launch_candidate(self.workflow.jobs[identifier])
+                self.schedule_candidates(batch)
         except Exception as error:
             with self.lock:
                 batch.update(stage='error',error=str(error)[:700]);self.save(batch)
         finally:
             with self.lock:
                 self.drafting.discard(batch['id']);self.workflow.running.discard(batch['id'])
+
+    def release_second(self,batch):
+        """Use provider completion, never a guessed percentage or elapsed timer."""
+        with self.lock:
+            first=self.workflow.jobs[batch['candidate_ids']['A']]
+            second=self.workflow.jobs[batch['candidate_ids']['B']]
+            already_submitted=second.get('submission_started') or second.get('task_id') or second.get('download_ready')
+            first_finished=(first.get('status')=='done' and bool(first.get('audio_url'))) or first.get('download_ready')
+            first_failed=definitely_failed(first) or (first.get('stage')=='error' and first['id'] not in self.workflow.running)
+            if not (already_submitted or batch.get('second_released_at') or first_finished or first_failed):return False
+            if not batch.get('second_released_at'):
+                batch['second_released_at']=time.time();self.save(batch)
+            self.launch_candidate(second)
+            return True
+
+    def schedule_candidates(self,batch):
+        if batch.get('schedule')!=SCHEDULE:
+            # Existing batches retain their identities and recovery behavior.
+            for identifier in batch['candidate_ids'].values():self.launch_candidate(self.workflow.jobs[identifier])
+            return
+        self.launch_candidate(self.workflow.jobs[batch['candidate_ids']['A']])
+        if not self.release_second(batch):self.launch_sequence(batch)
+
+    def launch_sequence(self,batch):
+        if batch['id'] in self.waiting:return
+        self.waiting.add(batch['id'])
+        # Keep admission busy even between A completing and B being dispatched.
+        marker='pair-queue:'+batch['id'];self.workflow.running.add(marker)
+        def watch():
+            try:
+                while not self.stopping.is_set():
+                    if self.release_second(batch):return
+                    self.stopping.wait(.5)
+            except Exception as error:
+                with self.lock:batch.update(error=str(error)[:700]);self.save(batch)
+            finally:
+                with self.lock:self.waiting.discard(batch['id']);self.workflow.running.discard(marker)
+        threading.Thread(target=watch,daemon=True).start()
 
     def launch_candidate(self,job):
         if job.get('submission_started') and not job.get('task_id') and not job.get('download_ready'):
@@ -211,7 +250,7 @@ class GenerationPairs:
                 for candidate_id in batch['candidate_ids'].values():
                     job=self.workflow.jobs[candidate_id]
                     job['selected_for_preparation']=candidate_id==batch.get('selected_candidate_id')
-                    self.launch_candidate(job)
+                self.schedule_candidates(batch)
             return self.public(batch)
 
     def select(self,identifier,candidate_id):

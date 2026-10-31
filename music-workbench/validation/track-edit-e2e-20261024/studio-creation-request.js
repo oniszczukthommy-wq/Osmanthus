@@ -50,22 +50,17 @@ export const generationIsBlocked=({creating,lyricsRequest,recovering})=>Boolean(
 export function creationProgress(value){
  const batch=value.batch||value,candidates=batch.candidates||[];
  if(value.error||batch.error)return value.error||batch.error;
- if(['preparing','separating'].includes(batch.stage))return '正在准备歌曲音轨，可继续试听';
- if(batch.stage==='ready')return '歌曲已就绪，可以继续编辑';
- if(batch.stage==='preparation_error')return '歌曲已生成，音轨准备未完成，请查看任务提示';
- if(batch.stage==='error')return '本次生成未完成，请查看任务提示';
+ if(batch.stage==='preparation_error')return '音轨准备未完成，请重试';
+ if(batch.stage==='error')return '本次创作未完成，请重试';
+ if(batch.stage==='ready')return '可以继续编辑';
  const complete=candidates.filter(c=>c.media?.complete||c.download_ready).length;
- if(candidates.length&&complete===candidates.length)return '两版歌曲已生成，试听后选择喜欢的一版';
- if(complete)return '已有完整歌曲可试听，另一版仍在生成';
- if(candidates.some(c=>c.media?.preview_complete))return '歌曲已可试听，后台正在保存完整音频';
- if(candidates.some(c=>c.media?.stream))return '已可试听，模型正在完成整首歌曲';
- if(candidates.some(c=>c.status==='done'))return '模型已完成，正在接收完整音频';
- return batch.instrumental?'正在生成纯音乐，请稍候':candidates.length?'模型正在生成歌曲，请稍候':batch.lyrics?'正在提交歌曲生成，请稍候':'正在创作歌词，请稍候';
+ if(candidates.length&&complete===candidates.length)return '试听并选择喜欢的一版';
+ if(candidates.some(c=>c.media?.complete||c.media?.preview_complete||c.media?.stream))return '可试听';
+ return '';
 }
 export function candidateProgress(candidate,fallback){
- if(candidate.media?.complete||candidate.download_ready)return fallback;
- if(candidate.media?.preview_complete)return '可试听 · 正在保存音频';
- if(candidate.media?.stream)return '可试听 · 正在完成整曲';
- if(candidate.status==='done')return '正在接收完整音频';
- return fallback;
+ if(candidate.stage==='error')return fallback||'请重试';
+ if(candidate.media?.complete||candidate.download_ready)return fallback||'可试听';
+ if(candidate.media?.preview_complete||candidate.media?.stream)return '可试听';
+ return '';
 }
