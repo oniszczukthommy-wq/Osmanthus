@@ -70,11 +70,26 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   function quote(s,kind){
     if(!s.plan)throw fail('请先生成方案'); validPreviews(s);
     const images=items(s).filter(x=>!s.previews[x.id]);
-    let seconds=0,shots=0;
-    if(kind==='render')for(const shot of s.plan.shots){const preview=s.previews[shot.id];if(!preview?.materialId)throw fail('请先生成并审核全部方案图片');const spec=videoRecipe(shot,preview,s.ratio),id=idFor(['video',s.id,spec]);if(video.get(id)?.status!=='ready'){seconds+=spec.duration;shots++;}}
-    const imageCost=kind==='preview'?+(images.length*Number(image.capabilities().estimatedCostCny||.2)).toFixed(2):0;
-    const vcap=video.capabilities(),videoCost=kind==='render'?+s.plan.shots.reduce((sum,shot)=>{const spec=videoRecipe(shot,s.previews[shot.id],s.ratio),id=idFor(['video',s.id,spec]);return sum+(video.get(id)?.status==='ready'?0:(vcap.estimatedCostsCny?.[spec.duration]??spec.duration*.15));},0).toFixed(2):0;
-    return{images:kind==='preview'?images.length:0,shots,seconds,imageCost,videoCost,total:+(imageCost+videoCost).toFixed(2),duration:s.range.duration};
+    const icap=image.capabilities(),vcap=video.capabilities();
+    let seconds=0,shots=0,videoCost=0;
+    if(kind==='render'||kind==='complete')for(const shot of s.plan.shots){
+      const preview=s.previews[shot.id];
+      if(kind==='render'&&!preview?.materialId)throw fail('请先生成并审核全部方案图片');
+      const spec=preview?.materialId?videoRecipe(shot,preview,s.ratio):null;
+      if(spec&&video.get(idFor(['video',s.id,spec]))?.status==='ready')continue;
+      const duration=Math.max(2,Math.ceil(shot.duration));seconds+=duration;shots++;
+      videoCost+=vcap.estimatedCostsCny?.[duration]??duration*.15;
+    }
+    videoCost=+videoCost.toFixed(2);
+    const imageCost=kind==='preview'||kind==='complete'?+(images.length*Number(icap.estimatedCostCny||.2)).toFixed(2):0;
+    const result={images:kind==='preview'||kind==='complete'?images.length:0,shots,seconds,imageCost,videoCost,total:+(imageCost+videoCost).toFixed(2),duration:s.range.duration};
+    if(kind==='complete'){
+      const capacity=(cap,required)=>({requiredCny:required,remainingCny:Number.isFinite(cap.remainingCny)?cap.remainingCny:null,shortfallCny:+Math.max(0,required-(cap.remainingCny??Infinity)).toFixed(2),available:required===0||cap.available===true});
+      result.budgets={image:capacity(icap,imageCost),video:capacity(vcap,videoCost)};
+      result.canComplete=Object.values(result.budgets).every(b=>b.available&&b.shortfallCny===0);
+      result.reusedImages=items(s).length-images.length;result.reusedShots=s.plan.shots.length-shots;
+    }
+    return result;
   }
   async function completion(context,partial=false){
     const response=await fetchImpl('https://api.deepseek.com/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({model,thinking:{type:'disabled'},temperature:.55,max_tokens:partial?1800:16000,response_format:{type:'json_object'},messages:[{role:'system',content:SYSTEM},{role:'user',content:JSON.stringify(context)}]}),signal:AbortSignal.timeout(180000)});
@@ -171,6 +186,13 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     if(kind==='prepare'||kind==='revise'){if(!key)throw fail('创作助手尚未配置',503);}
     if(kind==='revise'){affectedShots(s.plan,input.target);if(typeof input.instruction!=='string'||!input.instruction.trim()||input.instruction.length>2000)throw fail('请输入修改要求');}
     if(kind==='preview'||kind==='render'){
+      if(kind==='preview'){
+        const complete=quote(s,'complete');
+        if(!complete.canComplete){
+          if(Object.values(complete.budgets).some(b=>!b.available))throw fail('图片或视频生成服务暂不可用，方案已保存，未提交制作',503);
+          throw fail(`完成当前方案预计 ¥${complete.total.toFixed(2)}，当前测试额度不足。方案已保存，未提交图片或视频制作。`,402);
+        }
+      }
       const estimate=quote(s,kind),cap=(kind==='preview'?image:video).capabilities();
       if(estimate.total>0&&!cap.available)throw fail(cap.reason||'生成服务暂不可用',503);
       if(estimate.total>Number(cap.remainingCny??Infinity)+.001)throw fail(`本次预计 ¥${estimate.total.toFixed(2)}，当前测试额度不足。可缩短选段，已有方案已保留。`,402);
@@ -192,6 +214,6 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   function asset(id){const j=job(id);if(j?.status!=='ready'||j.kind!=='render'||!j.output)return null;const f=path.join(root,'media',id,'mv.mp4');if(!fs.existsSync(f)||hash(fs.readFileSync(f))!==j.output.sha256)return null;return{file:f,kind:'video',...j.output};}
   function recover(id){const j=job(id);if(!j||!['preview','render'].includes(j.kind)||j.status!=='failed')throw fail('这项任务不能自动重试，请先核对原任务',409);const s=session(j.session_id);if(s.activeJob||s.revision!==j.revision)throw fail('方案已改变或有其他任务，请查看当前方案',409);j.status='queued';j.message='正在恢复已有素材与任务';saveJob(j);s.activeJob=id;saveSession(s);schedule(id,1);return j;}
   for(const j of all('jobs'))if(!terminal.has(j.status))schedule(j.id,100);
-  return{open,get,start,recover,quote:(id,kind)=>{const s=session(id);if(!s||!['preview','render'].includes(kind))throw fail('MV方案或操作无效');return quote(s,kind);},job:id=>job(id),list:()=>all('sessions').map(publicSession).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)),asset,
+  return{open,get,start,recover,quote:(id,kind)=>{const s=session(id);if(!s||!['preview','render','complete'].includes(kind))throw fail('MV方案或操作无效');return quote(s,kind);},job:id=>job(id),list:()=>all('sessions').map(publicSession).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)),asset,
     refresh:async id=>{await advance(id);return job(id);},close(){closed=true;for(const timer of timers.values())clearTimeout(timer);timers.clear();}};
 }

@@ -4,12 +4,35 @@ const $=id=>document.getElementById(id),esc=value=>String(value??'').replace(/[&
 const time=n=>`${Math.floor(n/60)}:${(n%60).toFixed(1).padStart(4,'0')}`;
 const api=async(route,body)=>{const res=await fetch(localUrl(route),body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result=await res.json();if(!res.ok)throw Error(result.error||'操作未完成');return result;};
 let session=null,step='range',selection={mode:'full'},idea='',ratio='16:9',references=[],currentJob=null,poll=null,submitting=false,previewEnd=null,editTarget=null,subtitles=false;
+let cost=null,costKey='',costLoadingKey='',costError='';
 const audio=$('music');const done=new Set(['ready','failed','uncertain']);
 const project=()=>({source:session.source,lyrics:session.lyrics});
 const busy=()=>submitting||(currentJob&&!done.has(currentJob.status));
 function notice(message){$('notice').textContent=message;$('notice').hidden=false;clearTimeout(notice.timer);notice.timer=setTimeout(()=>$('notice').hidden=true,7000);}
 function range(){return selectMusicRange(project(),selection);}
 function chosen(){try{return range();}catch{return null;}}
+const sessionStamp=()=>session?session.id+':'+session.updatedAt:'';
+const money=n=>Number.isFinite(n)?'¥'+n.toFixed(2):'未设置';
+function renderCost(){
+  const host=$('cost-overview');if(!host)return;
+  const known=cost&&costKey===sessionStamp(),working=busy();
+  const shortfall=known?Object.values(cost.budgets).some(b=>b.shortfallCny>0):false;
+  host.innerHTML=working?'<p>制作进行中，完成后更新剩余费用。</p>':known?`<h2>完成当前方案的预计费用</h2><div class="cost-grid"><div><span>图片 · ${cost.images} 张待制作</span><strong>${money(cost.imageCost)}</strong></div><div><span>视频 · ${cost.shots} 个镜头待制作</span><strong>${money(cost.videoCost)}</strong></div><div><span>合计</span><strong>${money(cost.total)}</strong></div></div><p class="hint">已完成且未修改的 ${cost.reusedImages} 张图片、${cost.reusedShots} 个镜头可复用。少量方案文字费用另计，以实际服务账单为准。</p><p class="hint">当前制作额度：图片 ${money(cost.budgets.image.remainingCny)}，视频 ${money(cost.budgets.video.remainingCny)}。这不是账号余额。</p>${!cost.canComplete?`<p class="error">${shortfall?'当前制作额度不足。方案已保存，可以缩短音乐范围后重新规划。':'生成服务暂不可用，方案已保存。'}</p>`:''}<button data-action="refresh-cost">刷新费用</button>`:`<p>${costError?'暂时无法核对费用：'+esc(costError):'正在核对制作费用…'}</p>${costError?'<button data-action="refresh-cost">重新核对</button>':''}`;
+  const previews=$('app').querySelector('[data-action=previews]'),generate=$('app').querySelector('[data-action=generate]');
+  const missing=session.plan&&[...session.plan.characters,...session.plan.scenes,...session.plan.shots].some(x=>!session.previews[x.id]);
+  if(previews)previews.disabled=!!(working||!missing||!known||!cost.canComplete);
+  if(generate)generate.disabled=!!(working||missing||!known||!cost.canComplete);
+}
+async function refreshCost(force=false){
+  if(!session?.plan||step!=='plan'||busy()){renderCost();return;}
+  const key=sessionStamp();
+  if(!force&&costKey===key){renderCost();return;}
+  if(costLoadingKey===key)return;
+  costLoadingKey=key;cost=null;costKey='';costError='';renderCost();
+  try{const result=await api(`/api/mv-director/${session.id}/quote?kind=complete`);if(sessionStamp()===key){cost=result.estimate;costKey=key;}}
+  catch(e){if(sessionStamp()===key)costError=e.message;}
+  finally{if(costLoadingKey===key)costLoadingKey='';renderCost();}
+}
 function heading(){return `<div class="steps">${[['range','1 选择音乐与想法'],['plan','2 查看与修改方案'],['result','3 预览与导出']].map(([key,label])=>`<button data-step="${key}" aria-current="${step===key?'step':'false'}" ${busy()||key!=='range'&&!session.plan?'disabled':''}>${label}</button>`).join('')}</div>`;}
 function renderProgress(){const host=$('progress');if(!host)return;host.hidden=!currentJob||currentJob.status==='ready';host.innerHTML=currentJob?`<p class="${['failed','uncertain'].includes(currentJob.status)?'error':''}">${esc(currentJob.message)}</p>${!done.has(currentJob.status)?`<progress max="100" value="${currentJob.progress||0}"></progress><small>可以离开页面，回来后继续查看。</small>`:currentJob.status==='failed'&&['preview','render'].includes(currentJob.kind)?'<button data-action="recover">恢复已有任务</button>':''}`:'';}
 function render(){
@@ -28,6 +51,7 @@ function render(){
     const plan=session.plan,all=[...plan.characters,...plan.scenes,...plan.shots],missing=all.filter(x=>!session.previews[x.id]).length;
     const card=item=>`<article class="card" id="card-${item.id}">${session.previews[item.id]?`<img src="${esc(localUrl(session.previews[item.id].url))}" alt="${esc(item.name)}">`:'<div class="placeholder">等待制作预览图</div>'}<div class="body"><h3>${esc(item.name)}</h3>${item.start!==undefined?`<small>${time(item.start)}—${time(item.end)}</small><p>${esc(item.lyrics.map(l=>l.text).join(' / ')||'前奏、间奏或无歌词片段')}</p>`:''}<p>${esc(item.description)}</p><div class="actions">${item.start!==undefined?`<button data-listen="${item.id}">试听对应音乐</button>`:''}<button data-edit="${item.id}" ${disabled}>修改</button></div></div></article>`;
     content=`<h1>这首歌的画面方案</h1><section class="panel"><p>${esc(plan.summary)}</p><p class="hint">${esc(plan.style)}</p><p>${time(session.range.start)}—${time(session.range.end)} · ${plan.shots.length} 个镜头 · ${esc(session.ratio)}</p><div class="actions"><button data-edit="all" ${disabled}>修改整体方向</button><button data-action="previews" class="${missing?'primary':''}" ${disabled||!missing?'disabled':''}>${missing?`制作 ${missing} 张预览图`:'预览图已齐全'}</button></div></section>
+    <section id="cost-overview" class="panel" aria-live="polite"></section>
     ${plan.characters.length?`<div class="section-head"><h2>角色</h2></div><div class="cards">${plan.characters.map(card).join('')}</div>`:'<p>这份方案以场景和视觉表达为主，无需人物。</p>'}
     <div class="section-head"><h2>场景</h2></div><div class="cards">${plan.scenes.map(card).join('')}</div><div class="section-head"><h2>分镜与音乐</h2></div><div class="cards shot-cards">${plan.shots.map(card).join('')}</div>
     <section class="panel"><label class="check"><input type="checkbox" name="subtitles" ${subtitles?'checked':''} ${!session.lyrics.length||busy()?'disabled':''}>加入歌词字幕</label><div class="actions"><button data-action="generate" class="primary" ${disabled||missing?'disabled':''}>确认方案，生成 MV</button><span>${missing?'请先查看全部预览图，再生成视频':'仅重新制作有变化的镜头'}</span></div></section>`;
@@ -35,7 +59,7 @@ function render(){
     const output=session.generated;
     content=`<h1>${output?'你的 MV':'成片与历史版本'}</h1>${output?`<video class="output-video" id="result-video" controls playsinline preload="metadata" src="${esc(localUrl(output.url))}"></video><div class="actions"><a class="primary" style="padding:12px 18px;border-radius:10px" href="${esc(localUrl(output.url))}" download="${esc(session.title)}-MV.mp4">下载 MP4</a><button data-action="share">分享 MV</button><button data-step="plan" ${disabled}>修改画面</button><span>${time(output.duration)} · ${esc(session.ratio)}</span></div>`:'<p>确认方案后即可制作。已完成的旧版本会继续保留。</p>'}<div class="history">${[...session.outputs].reverse().map((x,i)=>`<a href="${esc(localUrl(x.url))}" download="${esc(session.title)}-MV-${i+1}.mp4">下载历史版本 · ${esc(new Date(x.createdAt).toLocaleString())}</a>`).join('')}</div>`;
   }
-  $('app').innerHTML=heading()+'<section id="progress" class="progress" aria-live="polite" hidden></section>'+content;renderProgress();
+  $('app').innerHTML=heading()+'<section id="progress" class="progress" aria-live="polite" hidden></section>'+content;renderProgress();renderCost();void refreshCost();
 }
 async function ask(title,body){$('confirm-title').textContent=title;$('confirm-body').innerHTML=body;$('confirm').showModal();return await new Promise(resolve=>$('confirm').addEventListener('close',()=>resolve($('confirm').returnValue==='ok'),{once:true}));}
 async function receive(job){const previousProgress=currentJob?.progress;currentJob=job;if(!done.has(job.status)&&job.kind==='preview'&&previousProgress!==job.progress){session=(await api('/api/mv-director/'+session.id)).session;render();}renderProgress();if(done.has(job.status)){session=(await api('/api/mv-director/'+session.id)).session;if(job.status==='ready'){if(['prepare','revise','preview'].includes(job.kind))step='plan';if(job.kind==='render')step='result';}render();return;}clearTimeout(poll);poll=setTimeout(async()=>{try{await receive((await api('/api/mv-director/jobs/'+job.id)).job);}catch(e){notice(e.message);poll=setTimeout(()=>receive(job),4000);}},2000);}
@@ -72,12 +96,16 @@ $('app').addEventListener('click',async event=>{
     if(b.dataset.listen){const shot=session.plan.shots.find(s=>s.id===b.dataset.listen);return await listen(shot.start,shot.end);}
     if(b.dataset.edit){editTarget=b.dataset.edit;const ids=affectedShots(session.plan,editTarget);$('edit-title').textContent=editTarget==='all'?'修改整体方向':'修改这部分画面';$('edit-impact').textContent=`将影响 ${ids.length} 个镜头：${session.plan.shots.filter(s=>ids.includes(s.id)).map(s=>s.name).join('、')}。歌曲与选段保持原样。`;$('edit-instruction').value='';$('edit').showModal();return;}
     const action=b.dataset.action;
+    if(action==='refresh-cost')return await refreshCost(true);
     if(action==='recover'){currentJob=(await api('/api/mv-director/recover',{job_id:currentJob.id})).job;render();return await receive(currentJob);}
     if(action==='listen-range'){const r=range();return await listen(r.start,r.end);}
     if(action==='prepare')return await submit('prepare',{selection,idea,ratio,references:references.map(r=>r.id)});
     if(action==='previews'||action==='generate'){
+      const complete=(await api(`/api/mv-director/${session.id}/quote?kind=complete`)).estimate;
+      cost=complete;costKey=sessionStamp();renderCost();
+      if(!complete.canComplete)return notice('制作额度不足或服务暂不可用，方案已保存，请查看费用说明。');
       const kind=action==='previews'?'preview':'render',q=(await api(`/api/mv-director/${session.id}/quote?kind=${kind}`)).estimate;
-      if(await ask(kind==='preview'?'制作方案预览图':'确认生成 MV',`<p>${kind==='preview'?`需要制作 ${q.images} 张图片`:`本次音乐 ${q.duration.toFixed(1)} 秒，需要生成 ${q.shots} 个镜头；其余镜头复用`}。</p><p>预计消耗 <strong>¥${q.total.toFixed(2)}</strong>，以实际服务账单为准。</p>`))await submit(kind,{confirmed:true,...(kind==='render'?{subtitles}:{})});
+      if(await ask(kind==='preview'?'制作方案预览图':'确认生成 MV',`<p>${kind==='preview'?`本次制作 ${q.images} 张图片`:`本次音乐 ${q.duration.toFixed(1)} 秒，需要生成 ${q.shots} 个镜头；其余镜头复用`}。</p><p>本次预计 <strong>¥${q.total.toFixed(2)}</strong>${kind==='preview'?`；后续视频预计 ${money(complete.videoCost)}，完成当前方案合计约 ${money(complete.total)}`:''}，以实际服务账单为准。</p>`))await submit(kind,{confirmed:true,...(kind==='render'?{subtitles}:{})});
     }
     if(action==='share'){
       const url=new URL(localUrl(session.generated.url),location.origin).href;

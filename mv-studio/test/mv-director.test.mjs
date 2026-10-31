@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {selectMusicRange,musicSlots,affectedShots,validateCreativePlan} from '../public/mv-director-domain.js';
 import {createMVDirector,analyzeMusic} from '../mv-director.mjs';
-const ff=process.env.FFMPEG_BIN||'ffmpeg',fp=process.env.FFPROBE_BIN||(ff.includes('/')?path.join(path.dirname(ff),'ffprobe'):'ffprobe');
+const ff=process.env.FFMPEG_BIN||'ffmpeg',fp=process.env.FFPROBE_BIN||path.join(path.dirname(ff),'ffprobe');
 const encode=args=>execFileSync(ff,['-v','error','-y',...args],{stdio:['ignore','pipe','pipe'],timeout:60000});
 const probe=file=>JSON.parse(execFileSync(fp,['-v','error','-show_streams','-show_format','-of','json',file],{encoding:'utf8'}));
 const project={source:{duration:201.23},lyrics:[{start:10,end:14,text:'同一句歌词'},{start:25,end:29,text:'下一句歌词'},{start:90,end:94,text:'同一句歌词'}]};
@@ -28,7 +28,7 @@ test('角色修改影响引用该角色的镜头；时间和结构由服务器�
   assert.deepEqual(affectedShots(p,'character-1'),['shot-1']);assert.deepEqual(affectedShots(p,'scene-1'),p.shots.map(s=>s.id));
   assert.throws(()=>affectedShots(p,'missing'));const invalid=plan(slots);invalid.shots[0].sceneId='not-a-scene';assert.throws(()=>validateCreativePlan(invalid,slots));
 });
-function fixture(t,{budget=100,brokenModel=false,duration=16}={}){
+function fixture(t,{budget=100,videoBudget=budget,brokenModel=false,duration=16}={}){
   const data=fs.mkdtempSync(path.join(os.tmpdir(),'osmanthus-director-'));t.after(()=>fs.rmSync(data,{recursive:true,force:true}));
   const audio=path.join(data,'song.wav');encode(['-f','lavfi','-i','sine=frequency=330:sample_rate=16000','-t',String(duration),audio]);
   const imageFile=path.join(data,'frame.png');encode(['-f','lavfi','-i','color=c=blue:s=1280x720','-frames:v','1',imageFile]);
@@ -36,7 +36,7 @@ function fixture(t,{budget=100,brokenModel=false,duration=16}={}){
   const pictures=new Map(),clips=new Map(),assets=new Map(),calls={model:0,image:0,video:0};
   const materials={upload:(name,bytes)=>{const id=crypto.randomUUID(),file=path.join(data,id+'.png');fs.writeFileSync(file,bytes);const material={id,name,kind:'image',bytes:bytes.length,url:'/files/materials/'+id+'.png'};assets.set(id,{file,material});return material;},asset:id=>assets.get(id)};
   const image={capabilities:()=>({available:true,remainingCny:budget,estimatedCostCny:.2}),get:id=>pictures.get(id),asset:id=>pictures.has(id)?{file:imageFile}:null,submit:async input=>{calls.image++;const result={id:input.request_id,status:'ready',url:'/files/image/'+input.request_id+'.png'};pictures.set(result.id,result);return result;}};
-  const video={capabilities:()=>({available:true,remainingCny:budget,estimatedCostsCny:Object.fromEntries(Array.from({length:14},(_,i)=>[i+2,(i+2)*.15]))}),get:id=>clips.get(id),asset:id=>clips.get(id)?.asset,
+  const video={capabilities:()=>({available:true,remainingCny:videoBudget,estimatedCostsCny:Object.fromEntries(Array.from({length:14},(_,i)=>[i+2,(i+2)*.15]))}),get:id=>clips.get(id),asset:id=>clips.get(id)?.asset,
     submit:async input=>{calls.video++;const file=path.join(data,input.request_id+'.mp4');encode(['-f','lavfi','-i','testsrc2=size=320x180:rate=24','-t',String(input.duration),'-c:v','libx264','-pix_fmt','yuv420p',file]);const result={id:input.request_id,status:'ready',asset:{file}};clips.set(result.id,result);return result;}};
   const fetchImpl=async(_url,options)=>{calls.model++;if(brokenModel)throw Error('network interrupted');const context=JSON.parse(JSON.parse(options.body).messages[1].content);const response=context.target?{name:'新旅人',description:'穿红色外套的旅人'}:plan(context.slots);return{ok:true,text:async()=>JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(response)}}]})};};
   const options={data,key:'test-only',image,video,materials,audioPath:()=>audio,probe,ffmpeg:ff,fetchImpl,pollMs:60000,analyze:async()=>({accents:[],energy:[]})};
@@ -52,6 +52,21 @@ test('完整方案、图片、真实视频合成；只改一个角色后复用�
   const unmodified=s.previews['shot-2'].imageId;s=await execute(f,s,'revise',{target:'character-1',instruction:'换红色外套'});assert.equal(s.generated,null);assert.equal(s.previews['shot-2'].imageId,unmodified);assert(!s.previews['shot-1']);
   assert.equal(f.d.quote(s.id,'preview').images,2);s=await execute(f,s,'preview',{confirmed:true});assert.equal(f.calls.image,shotCount+4);assert.equal(f.d.quote(s.id,'render').shots,1);
   s=await execute(f,s,'render',{confirmed:true,subtitles:false});assert.equal(f.calls.video,shotCount+1);assert.equal(s.outputs.length,2);assert(f.d.asset(first.id),'旧成片未覆盖');assert.deepEqual(fs.readFileSync(f.audio),original);
+  const reused=f.d.quote(s.id,'complete');assert.equal(reused.total,0);assert.equal(reused.images,0);assert.equal(reused.shots,0);assert.equal(reused.reusedShots,shotCount);assert.equal(reused.canComplete,true);
+});
+test('生成图片前显示整段图像和视频费用，报价不写工程也不调用生成模型',async t=>{
+  const f=fixture(t);let s=f.d.open(f.p);s=await execute(f,s,'prepare',{selection:{mode:'full'},idea:'先核对全部费用',ratio:'16:9',references:[]});
+  const original=JSON.stringify(f.d.get(s.id)),q=f.d.quote(s.id,'complete'),seconds=s.plan.shots.reduce((n,shot)=>n+Math.ceil(shot.duration),0);
+  assert.equal(q.images,s.plan.shots.length+2);assert.equal(q.seconds,seconds);assert.equal(q.shots,s.plan.shots.length);
+  assert.equal(q.imageCost,+(q.images*.2).toFixed(2));assert.equal(q.videoCost,+(seconds*.15).toFixed(2));assert.equal(q.total,+(q.imageCost+q.videoCost).toFixed(2));assert.equal(q.canComplete,true);
+  assert.equal(q.budgets.image.requiredCny,q.imageCost);assert.equal(q.budgets.video.requiredCny,q.videoCost);
+  assert.deepEqual(f.calls,{model:1,image:0,video:0});assert.equal(JSON.stringify(f.d.get(s.id)),original);
+});
+test('图片额度够但视频额度不足时，在第一张图片收费前阻止制作',async t=>{
+  const f=fixture(t,{budget:100,videoBudget:.1});let s=f.d.open(f.p);s=await execute(f,s,'prepare',{selection:{mode:'full'},idea:'预算验收',ratio:'16:9',references:[]});
+  const q=f.d.quote(s.id,'complete');assert.equal(q.budgets.image.shortfallCny,0);assert(q.budgets.video.shortfallCny>0);assert.equal(q.canComplete,false);
+  assert.throws(()=>f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'preview',input:{confirmed:true}}),e=>e.status===402&&/未提交图片或视频/.test(e.message));
+  assert.deepEqual(f.calls,{model:1,image:0,video:0});assert.equal(f.d.get(s.id).activeJob,null);assert.equal(f.d.get(s.id).revision,s.revision);
 });
 test('重启、重复请求、并发修改和不明确的提交均不会重复调用模型',async t=>{
   const f=fixture(t,{brokenModel:true}),s=f.d.open(f.p),input={session_id:s.id,revision:0,request_id:crypto.randomUUID(),kind:'prepare',input:{selection:{mode:'full'},idea:'海边',ratio:'16:9',references:[]}};
