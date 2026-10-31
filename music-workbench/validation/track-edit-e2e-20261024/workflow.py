@@ -2,6 +2,7 @@
 from __future__ import annotations
 import hashlib, importlib.util, json, os, re, shutil, subprocess, sys, threading, time, uuid
 import urllib.error, urllib.request
+from math import isfinite
 from pathlib import Path
 from project import ROOT, save_json
 
@@ -85,12 +86,49 @@ def valid_id(value):
 
 class Workflow:
     def __init__(self):
-        self.lock=threading.RLock();self.jobs=STREAM.JOBS;self.running=set();self.artwork=None
+        self.lock=threading.RLock();self.jobs=STREAM.JOBS;self.running=set();self.artwork=None;self.recovery_issues={}
         for path in RUNS.glob('*/state.json'):
+            identifier=path.parent.name
             try:
-                job=json.loads(path.read_text())
-                if valid_id(job['id']):self.jobs[job['id']]=job
-            except (ValueError,KeyError):continue
+                job=json.loads(path.read_text(encoding='utf-8'))
+                if (not isinstance(job,dict) or not valid_id(identifier) or job.get('id')!=identifier
+                    or not isinstance(job.get('created_at'),(int,float)) or isinstance(job.get('created_at'),bool)
+                    or not isfinite(job['created_at']) or not isinstance(job.get('events'),list)
+                    or not all(isinstance(e,dict) and isinstance(e.get('type'),str) for e in job['events'])
+                    or not all(isinstance(job.get(k),str) for k in ('title','status','stage'))
+                    or ('submission_started' in job and not isinstance(job['submission_started'],bool))):
+                    raise ValueError('invalid saved task')
+                task_id=job.get('task_id')
+                known_task=isinstance(task_id,str) and bool(task_id.strip())
+                if task_id is not None and task_id!='' and not known_task:
+                    raise ValueError('invalid saved provider task id')
+                audio=path.parent/'complete.mp3'
+                complete_audio=job.get('download_ready') is True and audio.is_file() and audio.stat().st_size>0
+                provider_events={'submitted','provider_status','poll_connection_retry','stream_url_received','generation_done','download_ready'}
+                paid_evidence=(known_task or bool(job.get('pipe_url')) or bool(job.get('audio_url'))
+                    or job.get('status') not in ('lyrics','pending','error')
+                    or any(event['type'] in provider_events for event in job['events']))
+                # Older jobs may predate the explicit False flag. A provider ID
+                # or an existing completed file is safe; missing fields alone
+                # must never be interpreted as permission to submit again.
+                if ('submission_started' not in job and not known_task and not complete_audio
+                    or job.get('submission_started') is False and paid_evidence):
+                    raise ValueError('saved submission evidence is incomplete or inconsistent')
+                self.jobs[identifier]=job
+            except (OSError,ValueError,KeyError,TypeError):
+                self.jobs.pop(identifier,None)
+                self.record_recovery_issue(identifier,'任务记录无法读取或校验失败，已停止恢复，需核对供应商原任务')
+
+    def record_recovery_issue(self,identifier,message):
+        if not valid_id(identifier):return
+        issue={'id':identifier,'error':message,'detected_at':time.time(),'recovery_blocked':True}
+        self.recovery_issues[identifier]=issue
+        # Keep the original state file untouched, including its corrupt bytes.
+        # A full/read-only disk must not prevent other projects from starting.
+        try:
+            folder=RUNS/identifier;folder.mkdir(parents=True,exist_ok=True)
+            save_json(folder/'recovery-error.json',issue)
+        except OSError:pass
 
     def creation_busy(self):
         # Provider-complete, unselected songs may still be downloading. They
@@ -133,6 +171,8 @@ class Workflow:
         if not valid_id(identifier):raise ValueError('缺少有效请求标识，请刷新页面重试')
         with self.lock:
             if identifier in self.jobs:return self.public(self.jobs[identifier])
+            if identifier in self.recovery_issues or (RUNS/identifier).exists():
+                raise ValueError('原任务记录需要核对，不能使用相同请求重新提交付费生成')
             if self.running:raise ValueError('已有歌曲正在生成或分轨，请等待当前任务完成')
             brief=str(body.get('brief','')).strip();style=str(body.get('style','中文流行')).strip();voice=str(body.get('voice',DEFAULT_VOICE)).strip()
             if not 3<=len(brief)<=2000:raise ValueError('请用3至2000字描述创作要求')
@@ -143,7 +183,7 @@ class Workflow:
                  'voice_control':'text_timbre_prompt','voice_exact_identity':False,
                  'created_at':time.time(),'status':'lyrics','stage':'lyrics','origin':'new_generation',
                  'events':[],'first_stream_seconds':None,'first_play_seconds':None,'done_seconds':None,
-                 'download_ready':False,'buffering_events':0,'project_id':identifier}
+                 'download_ready':False,'submission_started':False,'buffering_events':0,'project_id':identifier}
             self.jobs[identifier]=job;STREAM.persist(job);self.launch(job)
             return self.public(job)
 
@@ -184,6 +224,7 @@ class Workflow:
         threading.Thread(target=self.run,args=(job,),daemon=True).start()
 
     def lyrics(self,job,folder=None,persist_result=True):
+        from paid_usage import paid_call
         started=time.monotonic()
         request={'model':os.environ.get('DEEPSEEK_MODEL','deepseek-flash'),'thinking':{'type':'disabled'},
             'response_format':{'type':'json_object'},'temperature':.9,'max_tokens':2800,
@@ -202,9 +243,10 @@ class Workflow:
         for attempt in range(LYRIC_ATTEMPTS):
             save_json(folder/f'lyrics-request-attempt-{attempt+1}.json',request)
             save_json(payload,request)
-            completed=subprocess.run(['curl','--noproxy','*','--silent','--show-error','--fail-with-body','--connect-timeout','10','--max-time','75',
-                '--header','@-','--data-binary','@'+str(payload),'https://api.deepseek.com/chat/completions'],
-                input=('Authorization: Bearer '+key+'\nContent-Type: application/json\n').encode(),capture_output=True,timeout=80)
+            with paid_call('text'):
+                completed=subprocess.run(['curl','--noproxy','*','--silent','--show-error','--fail-with-body','--connect-timeout','10','--max-time','75',
+                    '--header','@-','--data-binary','@'+str(payload),'https://api.deepseek.com/chat/completions'],
+                    input=('Authorization: Bearer '+key+'\nContent-Type: application/json\n').encode(),capture_output=True,timeout=80)
             if completed.returncode:raise RuntimeError('写词服务连接失败；尚未提交付费生歌任务，可重试')
             response=json.loads(completed.stdout);save_json(folder/'lyrics-response.json',response)
             save_json(folder/f'lyrics-response-attempt-{attempt+1}.json',response)

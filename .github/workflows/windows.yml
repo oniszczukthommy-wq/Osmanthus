@@ -1,7 +1,7 @@
 name: Windows and portable startup
 on:
   push:
-    branches: [main, 'codex/windows-support']
+    branches: [main, 'codex/windows-support', 'codex/priority-safety-fixes']
   pull_request:
   workflow_dispatch:
 permissions:
@@ -46,6 +46,12 @@ jobs:
           if ($parseErrors.Count) { $parseErrors | Out-String | Write-Error; exit 1 }
       - name: Fresh checkout, file locks, music edit and WAV / MP3 export
         run: python -X utf8 tests/test_portable_startup.py
+      - name: Paid music limits, task recovery and confined media downloads
+        working-directory: music-workbench/validation/track-edit-e2e-20261024
+        run: python -X utf8 -m unittest -v test_generation_pairs test_workflow_recovery test_generation_drafts test_lyric_retry test_paid_usage test_media_paths
+      - name: Paid MV text limits and real HTTP regressions (mocked providers)
+        working-directory: mv-studio
+        run: node --test --test-concurrency=1 test/text-usage.test.mjs test/paid-http.test.mjs test/server.test.mjs
       - name: MV media and subtitle export with real FFmpeg (mocked model responses)
         working-directory: mv-studio
         run: node --test --test-concurrency=1 test/runtime-config.test.mjs test/subtitle-fonts.test.mjs test/canvas-video-editor.test.mjs test/music-bridge.test.mjs test/mv-director.test.mjs

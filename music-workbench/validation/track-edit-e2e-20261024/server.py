@@ -5,6 +5,8 @@ import errno, hashlib, json, mimetypes, os, re, subprocess, tempfile, threading,
 import urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from media_paths import media_file
+from paid_usage import paid_call, PaidUsageError
 from urllib.parse import unquote, urlparse
 import numpy as np
 import soundfile as sf
@@ -294,7 +296,8 @@ def assistant(body):
     started=time.perf_counter()
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        with opener.open(req,timeout=20) as resp: response=json.load(resp)
+        with paid_call('text'):
+            with opener.open(req,timeout=20) as resp: response=json.load(resp)
     except urllib.error.HTTPError as exc: raise ValueError(f'对话服务返回HTTP {exc.code}，本次没有修改工程') from None
     except (OSError,ValueError) as exc:
         # The local proxy/DNS occasionally drops Python TLS connections. Retry
@@ -305,7 +308,8 @@ def assistant(body):
                                  'error':str(exc).replace(key,'<redacted>')[:200]})+'\n')
         with tempfile.NamedTemporaryFile(suffix='.json') as payload:
             payload.write(json.dumps(request).encode());payload.flush()
-            result=subprocess.run(['curl','--noproxy','*','--silent','--show-error','--fail-with-body',
+            with paid_call('text'):
+                result=subprocess.run(['curl','--noproxy','*','--silent','--show-error','--fail-with-body',
                 '--connect-timeout','8','--max-time','35','--header','@-',
                 '--data-binary','@'+payload.name,'https://api.deepseek.com/chat/completions'],
                 input=('Authorization: Bearer '+key+'\nContent-Type: application/json\n').encode(),
@@ -554,15 +558,14 @@ class Handler(BaseHTTPRequestHandler):
         if match:
             try:
                 kind,identifier,name=match.groups()
-                if name.startswith('.') or Path(name).suffix not in (('.wav','.mp3','.zip') if kind=='exports' else ('.wav','.mp3')):raise ValueError('无效文件')
                 directory=project_directory(identifier) if kind=='audio' else export_directory(identifier)
-                return self.serve(directory/name)
+                return self.serve(media_file(directory,name,('.wav','.mp3','.zip') if kind=='exports' else ('.wav','.mp3')))
             except ValueError as exc:return self.json(404,{'error':str(exc)})
         for prefix,directory in [('/audio/',LEGACY_DATA),('/exports/',ROOT/'exports')]:
             if path.startswith(prefix):
                 name=path[len(prefix):]
-                if '/' in name or name.startswith('.') or Path(name).suffix not in ('.wav','.mp3'):return self.json(404,{'error':'无效文件'})
-                return self.serve(directory/name)
+                try:return self.serve(media_file(directory,name,('.wav','.mp3')))
+                except ValueError as exc:return self.json(404,{'error':str(exc)})
         return self.json(404,{'error':'接口不存在'})
 
     def do_HEAD(self):
@@ -731,6 +734,7 @@ class Handler(BaseHTTPRequestHandler):
                 if path=='/api/history/restore':
                     return self.json(200,{'project':PROJECT.restore_history(body.get('cursor'),body.get('revision'))})
             self.json(404,{'error':'接口不存在'})
+        except PaidUsageError as exc:self.json(exc.status,{'error':str(exc),'code':exc.code})
         except RuntimeError as exc:self.json(409,{'error':str(exc)})
         except (ValueError,KeyError,TypeError) as exc:self.json(422,{'error':str(exc)})
         except Exception as exc:

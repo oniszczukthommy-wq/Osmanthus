@@ -1,6 +1,7 @@
 """Fresh, structured songwriting briefs from the configured DeepSeek account."""
 import json,os,secrets,subprocess,tempfile,urllib.error,urllib.request
 from pathlib import Path
+from paid_usage import paid_call
 
 THEMES=('错过末班车后的意外相遇','旧物里找到新的出发理由','平常的一天被一个细节照亮','离开熟悉的城市重新开始','和过去的自己温柔告别','雨停以后决定赴约','朋友之间没有说出口的感谢','忙碌生活里偷来的一小段自由','重逢时已经改变的两个人','把遗憾变成向前走的勇气')
 STYLES=('中文流行','原声民谣','松弛 R&B','轻快流行摇滚','温暖 City Pop','叙事蓝调','轻爵士流行')
@@ -27,7 +28,8 @@ def complete(payload,key):
     req=urllib.request.Request(url,data=raw,headers={'Authorization':'Bearer '+key,'Content-Type':'application/json'})
     try:
         opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(req,timeout=30) as response:return json.load(response)
+        with paid_call('text'):
+            with opener.open(req,timeout=30) as response:return json.load(response)
     except urllib.error.HTTPError as exc:
         raise RuntimeError('DeepSeek 灵感服务暂不可用，请稍后重试') from None
     except (urllib.error.URLError,TimeoutError,OSError):
@@ -35,7 +37,8 @@ def complete(payload,key):
         with tempfile.TemporaryDirectory(prefix='osmanthus-inspiration-') as folder:
             path=Path(folder)/'request.json';path.write_bytes(raw)
             try:
-                result=subprocess.run(['curl','--noproxy','*','--silent','--show-error','--fail','--connect-timeout','8','--max-time','35','--header','@-','--header','Content-Type: application/json','--data-binary','@'+str(path),url],input=('Authorization: Bearer '+key+'\n').encode(),capture_output=True,timeout=40)
+                with paid_call('text'):
+                    result=subprocess.run(['curl','--noproxy','*','--silent','--show-error','--fail','--connect-timeout','8','--max-time','35','--header','@-','--header','Content-Type: application/json','--data-binary','@'+str(path),url],input=('Authorization: Bearer '+key+'\n').encode(),capture_output=True,timeout=40)
             except subprocess.TimeoutExpired:raise RuntimeError('DeepSeek 灵感连接超时，请稍后重试') from None
         if result.returncode:raise RuntimeError('DeepSeek 灵感连接失败，请再试一次')
         return json.loads(result.stdout)

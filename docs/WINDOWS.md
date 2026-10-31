@@ -52,3 +52,5 @@ GitHub 不包含 API Key、你的历史歌曲、分轨 WAV、受许可限制的�
 - 自动测试使用隔离的临时工程和合成媒体，不消耗音乐/视频 API 余额。测试覆盖空白启动、跨进程锁、进程存活检测、真实 WAV/MP3 编码、编辑后重启恢复和 MV 字幕导出。云模型听感与速度仍由实际账号和设备决定。
 
 自动测试记录：[Windows and portable startup](https://github.com/oniszczukthommy-wq/Osmanthus/actions/workflows/windows.yml)。
+
+模型调用次数、两个服务的独立额度账本、损坏任务恢复及受限下载规则见 [调用限额与安全恢复说明](SAFETY_LIMITS.md)。修改 `.env` 后重启生效；不要通过删除账本或损坏的任务文件来解除限制。

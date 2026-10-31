@@ -4,6 +4,7 @@ import copy,json,threading,time,uuid
 from pathlib import Path
 import workflow as w
 from generation_pairs import request_fields,digest
+from paid_usage import PaidUsageError,setting
 
 def title_text(value):
     if not isinstance(value,str) or not 1<=len(value.strip())<=120:raise ValueError('歌名需1至120字')
@@ -53,16 +54,24 @@ class GenerationDrafts:
                 if draft['request_fingerprint']!=digest(fields):raise RuntimeError('同一草稿请求ID不能用于不同创作要求')
                 return self.public(draft)
             if identifier in self.workflow.jobs or identifier in self.pairs.batches:raise RuntimeError('草稿请求ID已被使用')
+            self.require_capacity()
             draft={**fields,'id':identifier,'title':fields.get('title','新歌曲'),'version':1,'created_at':time.time(),
                    'request_fingerprint':digest(fields),'stage':'writing','error':None,'batch_id':None,'events':[],
                    'requested_title':fields.get('title')}
             self.drafts[identifier]=draft;self.save_state(draft);self.launch(draft)
             return self.public(draft)
 
+    def require_capacity(self):
+        if len(self.running)>=setting('MUSIC_DRAFT_MAX_WORKERS',2):
+            raise PaidUsageError('已有歌词草稿正在处理，暂未创建新任务；请完成当前草稿后重试',retry_after=5)
+
     def launch(self,draft):
         if draft['id'] in self.running:return
+        self.require_capacity()
         self.running.add(draft['id']);self.workflow.running.add(draft['id'])
-        threading.Thread(target=self.run,args=(draft,),daemon=True).start()
+        try:threading.Thread(target=self.run,args=(draft,),daemon=True).start()
+        except Exception:
+            self.running.discard(draft['id']);self.workflow.running.discard(draft['id']);raise
 
     def run(self,draft):
         try:
@@ -84,7 +93,8 @@ class GenerationDrafts:
         with self.lock:
             draft=self.read(identifier)
             if draft['stage']=='confirmed':return self.confirm(identifier,{'version':draft['version'],'fingerprint':digest(self.content(draft))})
-            if draft['stage']=='error':draft.update(stage='writing',error=None);self.save_state(draft);self.launch(draft)
+            if draft['stage']=='error':
+                self.require_capacity();draft.update(stage='writing',error=None);self.save_state(draft);self.launch(draft)
             return self.public(draft)
 
     def update(self,identifier,body):
@@ -128,7 +138,10 @@ class GenerationDrafts:
     def recover(self):
         with self.lock:
             for draft in self.drafts.values():
-                if draft['stage']=='writing':self.launch(draft)
+                if draft['stage']=='writing':
+                    try:self.launch(draft)
+                    except PaidUsageError as error:
+                        draft.update(stage='error',error=str(error));self.save_state(draft)
                 elif draft['stage']=='confirmed':
                     try:self.start_approved(draft)
                     except (RuntimeError,ValueError):pass

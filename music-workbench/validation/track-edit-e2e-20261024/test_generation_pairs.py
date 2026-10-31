@@ -36,7 +36,7 @@ class PairTests(unittest.TestCase):
 
     def ready(self,batch,slot):
         j=self.work.jobs[batch['candidate_ids'][slot]]
-        j.update(stage='awaiting_selection',status='done',download_ready=True,task_id='provider-'+slot)
+        j.update(stage='awaiting_selection',status='done',download_ready=True,submission_started=True,task_id='provider-'+slot)
         (self.runs/j['id']/'complete.mp3').write_bytes(b'unit fixture; not a real song')
         w.STREAM.persist(j)
         return j
@@ -55,6 +55,9 @@ class PairTests(unittest.TestCase):
         self.assertIn(a['prompt'],c['prompt']);self.assertIn(self.body['voice'],a['prompt'])
         self.assertNotIn('unused detailed planner result',a['prompt'])
         self.assertFalse(a['selected_for_preparation']);self.assertFalse(c['selected_for_preparation'])
+        for job in (a,c):
+            saved=json.loads((self.runs/job['id']/'state.json').read_text())
+            self.assertIs(saved.get('submission_started'),False)
 
     def test_first_song_only_until_provider_complete_even_when_stream_exists(self):
         b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
@@ -196,6 +199,64 @@ class PairTests(unittest.TestCase):
             service.recover()
             self.assertEqual([x.args[0]['id'] for x in launch.call_args_list],[c['id']])
         self.assertEqual(work.jobs[a['id']]['stage'],'awaiting_selection')
+
+    def recover_with_damaged_candidate(self,damage):
+        damaged=self.batch();paid=self.work.jobs[damaged['candidate_ids']['A']]
+        paid.update(submission_started=True,task_id='already-paid-task',status='pending')
+        w.STREAM.persist(paid);self.ready(damaged,'B')
+        state=self.runs/paid['id']/'state.json'
+        if damage=='missing':state.unlink()
+        elif damage=='invalid_json':state.write_text('{broken',encoding='utf-8')
+        elif damage=='incomplete':state.write_text(json.dumps({'id':paid['id']}),encoding='utf-8')
+        else:
+            altered=copy.deepcopy(paid);altered['id']=str(uuid.uuid4())
+            state.write_text(json.dumps(altered),encoding='utf-8')
+        preserved=state.read_bytes() if state.exists() else None
+        self.body={**self.body,'request_id':str(uuid.uuid4())}
+        healthy=self.batch();active=self.work.jobs[healthy['candidate_ids']['A']]
+        active.update(submission_started=True,task_id='healthy-existing-task');w.STREAM.persist(active)
+        # A true process restart has an empty module task table.
+        with patch.object(w.STREAM,'JOBS',{}):
+            work=w.Workflow();service=gp.GenerationPairs(work,self.root/'batches')
+            with patch.object(work,'launch') as launch,patch.object(service,'launch_sequence'):
+                service.recover()
+                self.assertEqual([c.args[0]['id'] for c in launch.call_args_list],[active['id']])
+                launch.reset_mock();service.resume(damaged['id']);launch.assert_not_called()
+            self.assertNotIn(paid['id'],work.jobs,'Damaged submitted jobs must never become fresh jobs')
+            public=service.public(service.read(damaged['id']))
+            blocked=next(c for c in public['candidates'] if c['id']==paid['id'])
+            self.assertTrue(blocked['recovery_blocked'])
+            self.assertFalse(blocked['can_resume']);self.assertFalse(blocked['can_retry_generation'])
+            self.assertTrue((self.runs/paid['id']/'recovery-error.json').is_file())
+            self.assertIn(paid['id'],json.loads((self.root/'batches'/damaged['id']/'state.json').read_text())['recovery_errors'])
+            self.assertEqual(state.read_bytes() if state.exists() else None,preserved)
+            self.assertFalse(work.creation_busy(),'One damaged batch must not block new creations')
+
+    def test_missing_submitted_candidate_is_quarantined_not_recreated(self):
+        self.recover_with_damaged_candidate('missing')
+
+    def test_corrupt_submitted_candidate_is_quarantined_not_recreated(self):
+        self.recover_with_damaged_candidate('invalid_json')
+
+    def test_incomplete_submitted_candidate_is_quarantined_not_recreated(self):
+        self.recover_with_damaged_candidate('incomplete')
+
+    def test_mismatched_task_identity_is_quarantined_not_loaded(self):
+        self.recover_with_damaged_candidate('wrong_identity')
+
+    def test_intact_completed_alternative_can_be_selected_after_selected_task_is_lost(self):
+        batch=self.batch();a=self.ready(batch,'A');b=self.ready(batch,'B')
+        batch['selected_candidate_id']=a['id'];self.service.save(batch)
+        (self.runs/a['id']/'state.json').unlink()
+        with patch.object(w.STREAM,'JOBS',{}):
+            work=w.Workflow();service=gp.GenerationPairs(work,self.root/'batches')
+            with patch.object(work,'launch') as launch:
+                service.recover();launch.assert_not_called()
+                selected=service.select(batch['id'],b['id'])
+                self.assertEqual(selected['selected_candidate_id'],b['id'])
+                launch.assert_called_once_with(work.jobs[b['id']])
+                self.assertTrue(work.jobs[b['id']]['download_ready'])
+                self.assertEqual(work.jobs[b['id']]['task_id'],'provider-B')
 
     def test_restart_selected_candidate_prepares_only_it(self):
         b=self.batch();a=self.ready(b,'A');c=self.ready(b,'B')

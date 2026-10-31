@@ -6,7 +6,9 @@ import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import nullcontext
 from runtime_support import load_env as read_env
+from paid_usage import paid_call
 
 
 def load_env():
@@ -22,8 +24,11 @@ def request_json(url, key, payload=None, timeout=60):
         method='POST' if payload is not None else 'GET')
     try:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        with opener.open(request, timeout=timeout) as response:
-            return json.load(response)
+        # This transport's only POST is a new YinChao song. Queries/downloads
+        # remain available when the host's new-generation allowance is spent.
+        with paid_call('song') if payload is not None else nullcontext():
+            with opener.open(request, timeout=timeout) as response:
+                return json.load(response)
     except urllib.error.HTTPError as error:
         detail = error.read(1600).decode('utf-8', 'replace').replace(key, '<redacted>')
         raise RuntimeError(f'HTTP {error.code}: {detail}') from None

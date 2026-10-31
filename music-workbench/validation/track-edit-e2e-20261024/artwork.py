@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from PIL import Image
 from project import ROOT
+from paid_usage import paid_call, PaidUsageError
 
 MODEL='qwen-image-2.0'
 PRICE_CNY=.2
@@ -101,7 +102,8 @@ def call_image(body,output_file):
     path=Path(output_file).parent/'request.json';save_json(path,body)
     command=['curl','--noproxy','*','--silent','--show-error','--fail-with-body','--connect-timeout','12','--max-time','180','--header','@-',
              '--data-binary','@'+str(path),settings['base']+'/api/v1/services/aigc/multimodal-generation/generation']
-    response=subprocess.run(command,input=headers.encode(),capture_output=True,timeout=190)
+    with paid_call('artwork'):
+        response=subprocess.run(command,input=headers.encode(),capture_output=True,timeout=190)
     try:data=json.loads(response.stdout)
     except (ValueError,UnicodeDecodeError):raise RuntimeError('绘图服务连接未确认，未自动重复提交，请核对后再试')
     # Save successful or failed provider receipt immediately.  It permits a
@@ -223,7 +225,10 @@ class Artwork:
         except Exception as error:
             key=os.environ.get('ARTWORK_API_KEY') or os.environ.get('DASHSCOPE_API_KEY','')
             message=str(error).replace(key,'<redacted>') if key else str(error)
-            with self.lock:job.update(stage='error',error=message[:500],finished_at=time.time());self.save(job)
+            with self.lock:
+                if isinstance(error,PaidUsageError) and not error.attempt_started:
+                    job.update(submission_started=False,usage_blocked=True)
+                job.update(stage='error',error=message[:500],finished_at=time.time());self.save(job)
         finally:
             with self.lock:self.running=None;self.launch_next()
 
@@ -241,6 +246,8 @@ class Artwork:
             if job['stage']=='ready':return self.public(job)
             if job['stage'] not in ('error','interrupted'):return self.public(job)
             response=self.directory/identifier/'response.json'
+            if job.get('usage_blocked') and not job.get('submission_started'):
+                job.update(stage='queued',error=None,usage_blocked=False);self.save(job);self.launch_next();return self.public(job)
             if not response.is_file():raise RuntimeError('绘图结果不明，不能安全重发；请核对后选择重新生成')
             image_url(json.loads(response.read_text()))
             job.update(stage='queued',error=None);self.save(job);self.launch_next();return self.public(job)

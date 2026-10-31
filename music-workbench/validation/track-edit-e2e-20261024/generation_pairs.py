@@ -104,6 +104,12 @@ class GenerationPairs:
             candidates=[]
             for slot,identifier in batch.get('candidate_ids',{}).items():
                 job=self.workflow.jobs.get(identifier)
+                if identifier in batch.get('recovery_errors',{}):
+                    candidates.append({'id':identifier,'label':'方案 '+slot,'title':batch['title'],'stage':'error',
+                        'status':'error','recovery_blocked':True,'error':batch['recovery_errors'][identifier],
+                        'can_select':False,'can_resume':False,'can_retry_generation':False,'download_ready':False,
+                        'project_ready':False,'media':{'stream':None,'complete':None,'preview_complete':None}})
+                    continue
                 if not job:continue
                 value=self.workflow.public(job)
                 # Strategy stays in server-side records; client sees neutral alternatives.
@@ -156,11 +162,20 @@ class GenerationPairs:
         self.drafting.add(batch['id']);self.workflow.running.add(batch['id'])
         threading.Thread(target=self.draft,args=(batch,),daemon=True).start()
 
-    def ensure_candidates(self,batch):
+    def ensure_candidates(self,batch,*,create_ids=()):
+        # Creation authority is local to this initial/retry transaction. A saved
+        # batch is not proof that a missing candidate was never submitted.
+        errors={};create_ids=set(create_ids)
         strategies=batch['strategies']
         for slot in ('A','B'):
             identifier=batch['candidate_ids'][slot]
-            if identifier in self.workflow.jobs:continue
+            job=self.workflow.jobs.get(identifier)
+            if job and job.get('batch_id')==batch['id'] and job.get('candidate_slot')==slot:continue
+            folder=w.RUNS/identifier
+            if job or identifier not in create_ids or identifier in self.workflow.recovery_issues or (folder.exists() and any(folder.iterdir())):
+                message='候选任务记录缺失或与批次不符，已停止自动生成；请先核对供应商原任务'
+                self.workflow.record_recovery_issue(identifier,message);errors[identifier]=message
+                continue
             now=time.time()
             job={'id':identifier,'batch_id':batch['id'],'candidate_slot':slot,'selected_for_preparation':False,
                 'title':batch['title'],'brief':batch['brief'],'style':batch['style'],'voice':batch['voice'],
@@ -169,8 +184,15 @@ class GenerationPairs:
                 'voice_control':'text_timbre_prompt','voice_exact_identity':False,'project_id':identifier,
                 'created_at':now,'status':'pending','stage':'queued' if slot=='B' and batch.get('schedule')==SCHEDULE and not batch.get('second_released_at') else 'generating','origin':'dual_generation',
                 'events':[],'first_stream_seconds':None,'first_play_seconds':None,'done_seconds':None,
-                'download_ready':False,'buffering_events':0}
-            self.workflow.jobs[identifier]=job;w.STREAM.persist(job)
+                'download_ready':False,'submission_started':False,'buffering_events':0}
+            w.STREAM.persist(job);self.workflow.jobs[identifier]=job
+        if errors or batch.get('recovery_errors'):
+            batch['recovery_errors']=errors
+            batch['error']='部分候选记录不完整，已停止恢复以避免重复扣费' if errors else None
+            if errors:batch['stage']='error'
+            try:self.save(batch)
+            except OSError:pass  # In-memory guard remains active on a full disk.
+        return not errors
 
     def draft(self,batch):
         try:
@@ -179,12 +201,13 @@ class GenerationPairs:
                 if batch.get('requested_title'):batch['title']=batch['requested_title']
             with self.lock:
                 batch.update(strategies=prompts(batch),stage='generating',error=None)
+                create_ids=()
                 if not batch['candidate_ids']:
                     batch['candidate_ids']={slot:str(uuid.uuid5(uuid.UUID(batch['id']),slot+':0')) for slot in ('A','B')}
                     batch['attempts']={slot:[identifier] for slot,identifier in batch['candidate_ids'].items()}
+                    create_ids=tuple(batch['candidate_ids'].values())
                 self.save(batch)  # Persist identities before creating any payable task.
-                self.ensure_candidates(batch)
-                self.schedule_candidates(batch)
+                if self.ensure_candidates(batch,create_ids=create_ids):self.schedule_candidates(batch)
         except Exception as error:
             with self.lock:
                 batch.update(stage='error',error=str(error)[:700]);self.save(batch)
@@ -207,6 +230,7 @@ class GenerationPairs:
             return True
 
     def schedule_candidates(self,batch):
+        if batch.get('recovery_errors'):return
         if batch.get('schedule')!=SCHEDULE:
             # Existing batches retain their identities and recovery behavior.
             for identifier in batch['candidate_ids'].values():self.launch_candidate(self.workflow.jobs[identifier])
@@ -246,7 +270,7 @@ class GenerationPairs:
             if not batch.get('candidate_ids'):
                 batch.update(stage='lyrics',error=None);self.save(batch);self.launch_draft(batch)
             else:
-                self.ensure_candidates(batch)
+                if not self.ensure_candidates(batch):return self.public(batch)
                 for candidate_id in batch['candidate_ids'].values():
                     job=self.workflow.jobs[candidate_id]
                     job['selected_for_preparation']=candidate_id==batch.get('selected_candidate_id')
@@ -263,7 +287,7 @@ class GenerationPairs:
                 raise RuntimeError('已有歌曲正在分轨，请完成后再采用其他歌曲')
             old=batch.get('selected_candidate_id')
             if old and old!=candidate_id and old in self.workflow.running:raise RuntimeError('已选歌曲正在分轨，请完成后再切换方案')
-            if old and old!=candidate_id:
+            if old and old!=candidate_id and old in self.workflow.jobs:
                 previous=self.workflow.jobs[old];previous['selected_for_preparation']=False;w.STREAM.persist(previous)
             batch['selected_candidate_id']=candidate_id;self.save(batch)
             job['selected_for_preparation']=True;w.STREAM.persist(job)
@@ -285,7 +309,8 @@ class GenerationPairs:
             slot=job['candidate_slot'];new_id=str(uuid.uuid5(uuid.UUID(batch['id']),'retry:'+request_id))
             batch['candidate_ids'][slot]=new_id;batch['attempts'][slot].append(new_id)
             batch['retry_requests'][request_id]={'old_candidate_id':candidate_id,'new_candidate_id':new_id}
-            self.save(batch);self.ensure_candidates(batch);self.launch_candidate(self.workflow.jobs[new_id])
+            self.save(batch)
+            if self.ensure_candidates(batch,create_ids=(new_id,)):self.launch_candidate(self.workflow.jobs[new_id])
             return self.public(batch)
 
     def recover(self):

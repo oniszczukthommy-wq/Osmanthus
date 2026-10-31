@@ -18,6 +18,7 @@ from pathlib import Path
 ROOT=Path(__file__).resolve().parent
 sys.path.insert(0,str(ROOT.parent/'track-edit-e2e-20261024'))
 from provider_http import load_env,request_json,download
+from paid_usage import PaidUsageError
 
 PORT=int(os.environ.get('YINCHAO_STREAM_PORT','8602'))
 LOCK=threading.RLock()
@@ -115,6 +116,8 @@ def worker(job:dict)->None:
     except Exception as error:
         message=str(error).replace(key,'<redacted>') if key else str(error)
         with LOCK:
+            if isinstance(error,PaidUsageError) and not error.attempt_started and not job.get('task_id'):
+                job['submission_started']=False
             job['error']=message
             if job['status']=='done':job['download_error']=message
             else:job['status']='error';job['generation_error']=message

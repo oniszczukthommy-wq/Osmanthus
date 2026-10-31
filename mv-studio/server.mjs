@@ -20,6 +20,8 @@ import {createCanvasAudioTools} from './canvas-audio-tools.mjs';
 import {createCanvasVision} from './canvas-vision.mjs';
 import {getOiiPromptTemplate} from './public/oiioii-canvas-catalog.js';
 import {mediaTools,readOptionalEnv} from './runtime-config.mjs';
+import {createTextUsage} from './text-usage.mjs';
+import {createLegacyPlanning} from './legacy-planning.mjs';
 const ROOT=path.dirname(fileURLToPath(import.meta.url)),PUBLIC=path.join(ROOT,'public');
 const env=readOptionalEnv(process.env.MV_ENV_FILE,ROOT);
 // Explicit process configuration takes priority over the optional chosen file.
@@ -30,12 +32,14 @@ for(const x of ['uploads','jobs','versions'])fs.mkdirSync(path.join(DATA,x),{rec
 const json=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value,null,2));fs.renameSync(file+'.tmp',file)},read=(file,fallback=null)=>{try{return JSON.parse(fs.readFileSync(file))}catch{return fallback}},uid=()=>crypto.randomUUID(),sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const key=process.env.MV_DISABLE_MODELS==='1'?'':process.env.DEEPSEEK_API_KEY||env.DEEPSEEK_API_KEY||'',model=process.env.DEEPSEEK_MODEL||env.DEEPSEEK_MODEL||'deepseek-flash';
 const aliKey=process.env.MV_DISABLE_MODELS==='1'?'':process.env.DASHSCOPE_API_KEY||env.DASHSCOPE_API_KEY||'';
+const textUsage=createTextUsage({data:DATA}),textFetch=textUsage.wrapFetch(globalThis.fetch);
+const legacyPlanning=createLegacyPlanning({data:DATA,model,generate:enrich,check:textUsage.check});
 const aliVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:process.env.MV_VIDEO_MODEL||env.MV_VIDEO_MODEL||'wanx2.1-t2v-turbo',region:process.env.MV_VIDEO_REGION||env.MV_VIDEO_REGION||'cn-beijing',budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20),probe});
-const aiPlanner=createMVPlanner({data:DATA,key,model});
+const aiPlanner=createMVPlanner({data:DATA,key,model,fetchImpl:textFetch});
 const aiMV=createAIMVWorkflow({data:DATA,planner:aiPlanner,video:aliVideo,audioPath,probe,ffmpeg:ff});
 const tasks=new Map();
 function capability(){return{kind:'local-ai-music-video-workspace',freeRender:fs.existsSync(ff)&&fs.existsSync(fp),deepseek:!!key,aliyunVideo:aliVideo.capabilities(),canvas:{image:imageModel.capabilities(),imageVideo:imageVideo.capabilities(),speech:speechModel.capabilities(),vision:canvasVision.capabilities(),asr:canvasAudio.capabilities(),editing:fs.existsSync(ff)&&fs.existsSync(fp),visualAnalysis:!!aliKey},asr:canvasAudio.capabilities().available,platformLinks:false,comfy:{available:false,reason:'当前视频使用阿里万相API。'},sample:fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))};}
-function audioPath(source){if(source.id==='sample')return path.join(PUBLIC,'assets/sample-song.mp3');if(!/^[a-f0-9-]{36}\.(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(source.id))throw Error('音频来源无效');const p=path.join(DATA,'uploads',source.id);if(!fs.existsSync(p))throw Error('找不到原音频，请重新上传');return p;}
+function audioPath(source){if(source.id!=='sample'&&!/^[a-f0-9-]{36}\.(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(source.id))throw Error('音频来源无效');const p=source.id==='sample'?path.join(PUBLIC,'assets/sample-song.mp3'):path.join(DATA,'uploads',source.id);let stat;try{stat=fs.lstatSync(p);}catch{throw Error('找不到原音频，请重新上传');}if(!stat.isFile()||stat.isSymbolicLink())throw Error('原音频文件无效，请重新上传');return p;}
 function probe(file){return JSON.parse(execFileSync(fp,['-v','error','-show_format','-show_streams','-of','json',file],{encoding:'utf8',timeout:20000,maxBuffer:1e6}));}
 function waveform(file){if(!fs.existsSync(file))return[];try{const a=execFileSync(ff,['-v','error','-i',file,'-vn','-ac','1','-ar','400','-f','f32le','-'],{timeout:20000,maxBuffer:20e6});const bins=[];for(let i=0;i<100;i++){const start=Math.floor(a.length/4*i/100),end=Math.floor(a.length/4*(i+1)/100);let sum=0;for(let j=start;j<end;j++){const n=a.readFloatLE(j*4);sum+=n*n;}bins.push(Math.sqrt(sum/Math.max(1,end-start)));}const max=Math.max(.001,...bins);return bins.map(x=>Math.round(x/max*100)/100);}catch{return[];}}
 const sampleWave=fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))?waveform(path.join(PUBLIC,'assets/sample-song.mp3')):[];
@@ -45,13 +49,13 @@ const materials=createMaterialStore({data:DATA,probe,write:json});
 const imageModel=createAliImage({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4),maxBudgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4)});
 const imageVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:'wan2.6-i2v-flash',probe,budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20)});
 const speechModel=createAliSpeech({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:1});
-const canvasPrompts=createCanvasPrompts({data:DATA,key,aliKey,visionModel:process.env.DASHSCOPE_VISION_MODEL||env.DASHSCOPE_VISION_MODEL||'qwen3.5-flash',workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model,materials});
+const canvasPrompts=createCanvasPrompts({data:DATA,key,aliKey,visionModel:process.env.DASHSCOPE_VISION_MODEL||env.DASHSCOPE_VISION_MODEL||'qwen3.5-flash',workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model,materials,fetchImpl:textFetch});
 const firstFrames=createCanvasFirstFrame({data:DATA,ffmpeg:ff,probe,materials});
 const canvasGeneration=createCanvasGeneration({data:DATA,image:imageModel,video:aliVideo,imageVideo,speech:speechModel,prompts:canvasPrompts,materials,prepareVideoFrame:input=>firstFrames.prepare(input)});
 const canvasVision=createCanvasVision({data:DATA,resolveMaterial:id=>materials.asset(id)});
 const canvasEditor=createCanvasVideoEditor({data:DATA,ffmpeg:ff,probe,resolveAsset:resolveCanvasAsset});
 const canvasAudio=createCanvasAudioTools({data:DATA,ffmpeg:ff,probe,resolveAsset:resolveCanvasAsset});
-const mvDirector=createMVDirector({data:DATA,key,model,image:imageModel,video:imageVideo,materials,audioPath,probe,ffmpeg:ff});
+const mvDirector=createMVDirector({data:DATA,key,model,image:imageModel,video:imageVideo,materials,audioPath,probe,ffmpeg:ff,fetchImpl:textFetch});
 function resolveCanvasAsset(id){
  if(UUID.test(id||'')){const local=materials.asset(id);if(local)return local;const video=aliVideo.asset(id);if(video)return video;const picture=imageModel.asset(id);if(picture)return picture;const speech=speechModel.asset(id);if(speech)return speech;}
  if(id==='sample')return{file:path.join(PUBLIC,'assets/sample-song.mp3'),kind:'audio'};
@@ -175,8 +179,8 @@ function serveFile(req,res,file,mime){if(!fs.existsSync(file)||!fs.statSync(file
 async function enrich(p){
  if(!key){const e=Error('故事助手尚未配置，当前可以使用已准备好的故事方案。');e.status=503;throw e;}
  const input={story:p.plan.title,summary:p.plan.summary,creativeBrief:typeof p.studio?.prompt==='string'?p.studio.prompt.slice(0,2000):'',mvType:p.studio?.type||'story',lyrics:p.lyrics.filter(l=>l.end>p.start&&l.start<p.start+p.duration).map(l=>l.text),manualLyrics:String(p.manualLyrics||'').slice(0,4000),shots:p.plan.shots.map(({id,action,label})=>({id,action,label}))};
- const response=await fetch('https://api.deepseek.com/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({model,thinking:{type:'disabled'},max_tokens:1400,temperature:.6,response_format:{type:'json_object'},messages:[{role:'system',content:'你是中文MV导演。已有可执行的8镜头故事，按歌词主题与整体情绪优化镜头表达。保持镜头id、动作、顺序和数量不变。返回JSON {"summary":"一句话情感逻辑","shots":[{"id":1,"caption":"此镜可见行动与情绪目的，30字内","camera":"wide或medium或close","warm":0到1}]}。摄影支持拉近、全景，不能描述未提供的新动作。不输出其他字段，不声称直接听过音频。'},{role:'user',content:JSON.stringify(input)}]}),signal:AbortSignal.timeout(60000)});
- if(!response.ok)throw Error('故事助手本次没有完成，请手动重试或使用现有方案。');const raw=await response.json();const record={id:uid(),at:new Date().toISOString(),model:raw.model,usage:raw.usage,response:raw};fs.mkdirSync(path.join(DATA,'model-calls'),{recursive:true});json(path.join(DATA,'model-calls',record.id+'.json'),record);
+ const response=await textFetch('https://api.deepseek.com/chat/completions',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+key},body:JSON.stringify({model,thinking:{type:'disabled'},max_tokens:1400,temperature:.6,response_format:{type:'json_object'},messages:[{role:'system',content:'你是中文MV导演。已有可执行的8镜头故事，按歌词主题与整体情绪优化镜头表达。保持镜头id、动作、顺序和数量不变。返回JSON {"summary":"一句话情感逻辑","shots":[{"id":1,"caption":"此镜可见行动与情绪目的，30字内","camera":"wide或medium或close","warm":0到1}]}。摄影支持拉近、全景，不能描述未提供的新动作。不输出其他字段，不声称直接听过音频。'},{role:'user',content:JSON.stringify(input)}]}),signal:AbortSignal.timeout(60000)});
+ if(!response.ok){const e=Error(response.status===429?'文字调用额度或并发已达上限，请稍后或由管理员核对限额':'故事助手本次没有完成，请保留当前方案并核对原任务。');e.status=response.status===429?429:502;throw e;}const raw=await response.json();const record={id:uid(),at:new Date().toISOString(),model:raw.model,usage:raw.usage,response:raw};fs.mkdirSync(path.join(DATA,'model-calls'),{recursive:true});json(path.join(DATA,'model-calls',record.id+'.json'),record);
  let d;try{d=JSON.parse(raw.choices[0].message.content)}catch{throw Error('故事助手返回格式不完整，未覆盖当前方案。');}if(d.shots?.length!==8)throw Error('故事助手未提供8个完整镜头，原方案仍保留。');const next=clone(p);
  for(const [i,x]of d.shots.entries()){if(x.id!==i+1||!['wide','medium','close'].includes(x.camera)||typeof x.caption!=='string'||x.caption.length>90||!Number.isFinite(x.warm)||x.warm<0||x.warm>1)throw Error('镜头内容校验未通过，原方案仍保留。');Object.assign(next.plan.shots[i],{caption:x.caption,camera:x.camera,warm:x.warm});}
  next.planningSource='deepseek';if(typeof d.summary==='string')next.plan.summary=d.summary.slice(0,160);validateProject(next);return next;
@@ -292,12 +296,16 @@ export function createServer(){return http.createServer(async(req,res)=>{
   }
   if(method==='POST'&&route==='/api/canvas-assist'){
    if(!key)return send(503,{error:'画布助手尚未配置，当前可手动编辑画布',code:'ASSISTANT_UNAVAILABLE'});
-   if(!canvasAssistant){const {createCanvasAssistant}=await import('./canvas-assistant.mjs');canvasAssistant=createCanvasAssistant({data:DATA,key,model});}
+   if(!canvasAssistant){const {createCanvasAssistant}=await import('./canvas-assistant.mjs');canvasAssistant=createCanvasAssistant({data:DATA,key,model,fetchImpl:textFetch});}
    return send(200,await canvasAssistant.assist(JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES))));
   }
   if(method==='GET'&&route==='/api/versions'){const arr=fs.readdirSync(path.join(DATA,'versions')).filter(x=>x.endsWith('.json')).map(x=>read(path.join(DATA,'versions',x))).filter(Boolean).sort((a,b)=>b.createdAt.localeCompare(a.createdAt));return send(200,{versions:arr});}
   if(method==='POST'&&route==='/api/versions'){const {project,label,output}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);if(output&&JSON.stringify(output)!==JSON.stringify(project.generated))return send(400,{error:'历史成片与当前工程不一致'});return send(201,{version:version(project,String(label||'保存方案').slice(0,100),output||null)});}
-  if(method==='POST'&&route==='/api/plan'){const {project}=JSON.parse(await body(req));validateProject(project);return send(200,{project:await enrich(project)});}
+  if(method==='POST'&&route==='/api/plan'){
+   if(!key)return send(503,{error:'故事助手尚未配置，当前可以使用已准备好的故事方案。'});
+   const {project}=JSON.parse(await body(req));validateServerProject(project);
+   return send(200,{project:await legacyPlanning.plan(project)});
+  }
   if(method==='POST'&&route==='/api/music-import'){const {handoff_id}=JSON.parse(await body(req));return send(200,await musicBridge.importMusic(handoff_id));}
   if(method==='POST'&&route==='/api/import-link')return send(501,{error:'平台分享链接的解析通道尚未接通。当前请上传音频，或从示例开始。'});
   if(method==='POST'&&route==='/api/upload'){

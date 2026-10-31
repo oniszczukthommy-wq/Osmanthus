@@ -20,7 +20,7 @@ class GenerationDraftTests(unittest.TestCase):
         for obj,name,value in ((w,'RUNS',self.runs),(w,'PROJECTS',self.projects),
                                (w.STREAM,'ROOT',self.root),(w.STREAM,'JOBS',{})):
             self.stack.enter_context(patch.object(obj,name,value))
-        self.stack.enter_context(patch.dict(w.os.environ,{'DEEPSEEK_API_KEY':'unit-test-only','YINCHAO_API_KEY':'unit-test-only'}))
+        self.stack.enter_context(patch.dict(w.os.environ,{'DEEPSEEK_API_KEY':'unit-test-only','YINCHAO_API_KEY':'unit-test-only','MUSIC_PAID_USAGE_DB':str(self.root/'usage.sqlite3')}))
         self.workflow=w.Workflow();self.pairs=gp.GenerationPairs(self.workflow,self.root/'batches')
         self.manager=gd.GenerationDrafts(self.pairs,self.root/'drafts')
         self.draft_launch=self.stack.enter_context(patch.object(self.manager,'launch'))

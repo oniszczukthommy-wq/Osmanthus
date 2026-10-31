@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import tempfile
 import unittest
 import uuid
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -43,7 +44,8 @@ class LyricRetryTests(unittest.TestCase):
         self.events = self.stack.enter_context(patch.object(w.STREAM, "event"))
         self.provider = self.stack.enter_context(patch.object(w.STREAM, "worker"))
         self.stack.enter_context(
-            patch.dict(w.os.environ, {"DEEPSEEK_API_KEY": "unit-test-placeholder-key"})
+            patch.dict(w.os.environ, {"DEEPSEEK_API_KEY": "unit-test-placeholder-key",
+                "MUSIC_PAID_USAGE_DB": str(self.temp / "usage.sqlite3")})
         )
         self.service = w.Workflow()
         identifier = str(uuid.uuid4())
@@ -104,6 +106,8 @@ class LyricRetryTests(unittest.TestCase):
             self.service.lyrics(self.job)
 
         self.assertEqual(calls.call_count, 3)
+        with closing(sqlite3.connect(self.temp / 'usage.sqlite3')) as ledger:
+            self.assertEqual(ledger.execute('SELECT COUNT(*) FROM attempts').fetchone()[0], 3)
         self.assert_measured_shortening_feedback(self.requests[1])
         self.assert_measured_shortening_feedback(self.requests[2])
         self.assertEqual(self.job["lyric_han_characters"], 368)
@@ -130,6 +134,16 @@ class LyricRetryTests(unittest.TestCase):
         self.assertNotIn("prompt", self.job)
         self.assertFalse(self.job.get("submission_started", False))
         self.assertIsNone(self.job.get("task_id"))
+        self.provider.assert_not_called()
+
+    def test_lyric_repair_stops_before_exceeding_host_limit(self):
+        from paid_usage import PaidUsageError
+        long_song = song_with_line('晚风轻轻吹过城市街角')
+        with patch.dict(w.os.environ, {'MUSIC_TEXT_DAILY_LIMIT': '1'}), patch.object(
+            w.subprocess, 'run', side_effect=self.deepseek_responses([long_song])
+        ) as calls, self.assertRaises(PaidUsageError):
+            self.service.lyrics(self.job)
+        self.assertEqual(calls.call_count, 1)
         self.provider.assert_not_called()
 
 
