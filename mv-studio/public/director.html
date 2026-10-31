@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Osmanthus · 创作 MV</title><link rel="icon" href="./assets/brand/osmanthus-logo.png"><link rel="stylesheet" href="./mv-director.css"></head>
+<body><header class="top"><a id="music-home" class="brand"><img src="./assets/brand/osmanthus-logo.png" alt="Osmanthus 桂花标志"><strong>Osmanthus</strong><span>MV</span></a><nav><a href="./director.html">我的 MV</a><button id="advanced" hidden>精细编辑 ↗</button><a id="music-back">返回音乐</a></nav></header>
+<div class="song-bar" id="song-bar" hidden><div><strong id="song-title"></strong><span id="song-info"></span></div><audio id="music" controls preload="metadata"></audio><span id="playing-lyric" aria-live="off"></span></div>
+<main id="app"><p role="status">正在打开歌曲…</p></main><div id="notice" role="status" hidden></div>
+<dialog id="confirm"><form method="dialog"><h2 id="confirm-title"></h2><div id="confirm-body"></div><footer><button value="cancel">返回修改</button><button value="ok" class="primary">确认继续</button></footer></form></dialog>
+<dialog id="edit"><form id="edit-form"><h2 id="edit-title">修改方案</h2><p id="edit-impact"></p><label>描述你想怎么改<textarea id="edit-instruction" rows="4" maxlength="2000" placeholder="例如：保留角色，改成傍晚海边，镜头缓慢拉远" required></textarea></label><footer><button type="button" id="edit-cancel">取消</button><button class="primary" type="submit">应用修改</button></footer></form></dialog>
+<dialog id="share-dialog"><h2>分享 MV</h2><p>把这支 MV 发给朋友。对方需要能访问当前网站；本机地址仅在本机有效。</p><label>成片链接<input id="share-url" readonly></label><footer><button id="share-close">关闭</button><button id="share-system">系统分享</button><button id="share-copy" class="primary">复制链接</button></footer></dialog>
+<script type="module" src="./mv-director.js"></script></body></html>

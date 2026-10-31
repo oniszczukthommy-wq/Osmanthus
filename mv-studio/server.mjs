@@ -4,11 +4,12 @@ import {createMusicBridge} from './music-bridge.mjs';
 import {createMaterialStore,MATERIAL_LIMITS} from './materials.mjs';
 import {createCanvasProjects,MAX_CANVAS_RECORD_BYTES} from './canvas-projects.mjs';
 import {getOutputFormat,validateOutputDimensions} from './public/output-format.js';
-import {validateCanvasDocument} from './public/canvas-document.js';
+import {validateCanvasDocument,createCanvasDocument,addNode} from './public/canvas-document.js';
 import {validateCanvasDrawings} from './public/canvas-preferences.js';
 import {createAliVideo} from './aliyun-video.mjs';
 import {createMVPlanner} from './ai-mv-planner.mjs';
 import {createAIMVWorkflow} from './ai-mv-workflow.mjs';
+import {createMVDirector} from './mv-director.mjs';
 import {createAliImage} from './aliyun-image.mjs';
 import {createAliSpeech} from './aliyun-speech.mjs';
 import {createCanvasPrompts} from './canvas-prompts.mjs';
@@ -41,7 +42,7 @@ const sampleWave=fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))?wavef
 function version(p,label,output=null){const id=uid(),v={id,createdAt:new Date().toISOString(),label,project:clone(p),output};json(path.join(DATA,'versions',id+'.json'),v);return v;}
 const activeProjectFile=path.join(DATA,'project.json'),UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const materials=createMaterialStore({data:DATA,probe,write:json});
-const imageModel=createAliImage({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:4});
+const imageModel=createAliImage({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4),maxBudgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4)});
 const imageVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:'wan2.6-i2v-flash',probe,budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20)});
 const speechModel=createAliSpeech({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:1});
 const canvasPrompts=createCanvasPrompts({data:DATA,key,aliKey,visionModel:process.env.DASHSCOPE_VISION_MODEL||env.DASHSCOPE_VISION_MODEL||'qwen3.5-flash',workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model,materials});
@@ -50,6 +51,7 @@ const canvasGeneration=createCanvasGeneration({data:DATA,image:imageModel,video:
 const canvasVision=createCanvasVision({data:DATA,resolveMaterial:id=>materials.asset(id)});
 const canvasEditor=createCanvasVideoEditor({data:DATA,ffmpeg:ff,probe,resolveAsset:resolveCanvasAsset});
 const canvasAudio=createCanvasAudioTools({data:DATA,ffmpeg:ff,probe,resolveAsset:resolveCanvasAsset});
+const mvDirector=createMVDirector({data:DATA,key,model,image:imageModel,video:imageVideo,materials,audioPath,probe,ffmpeg:ff});
 function resolveCanvasAsset(id){
  if(UUID.test(id||'')){const local=materials.asset(id);if(local)return local;const video=aliVideo.asset(id);if(video)return video;const picture=imageModel.asset(id);if(picture)return picture;const speech=speechModel.asset(id);if(speech)return speech;}
  if(id==='sample')return{file:path.join(PUBLIC,'assets/sample-song.mp3'),kind:'audio'};
@@ -130,7 +132,7 @@ function syncRenamedProject(record){
 }
 function materialIsReferenced(material){
  const files=[activeProjectFile];
- for(const folder of ['canvas-projects','music-projects','versions','canvas-generation','canvas-output-materials','canvas-first-frames','aliyun-image','aliyun-video','canvas-prompts']){
+ for(const folder of ['canvas-projects','music-projects','versions','canvas-generation','canvas-output-materials','canvas-first-frames','aliyun-image','aliyun-video','canvas-prompts','mv-director/sessions','mv-director/jobs','mv-director/versions']){
   const directory=path.join(DATA,folder);
   if(!fs.existsSync(directory))continue;
   for(const name of fs.readdirSync(directory))if(name.endsWith('.json'))files.push(path.join(directory,name));
@@ -202,6 +204,26 @@ export function createServer(){return http.createServer(async(req,res)=>{
   if(method==='POST'&&(route==='/api/canvas/extract-audio'||route==='/api/canvas/transcribe')){
    const {project,...input}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));validateServerProject(project);const job=await canvasAudio[route.endsWith('transcribe')?'transcribe':'extract']({...input,project_id:project.id});let registered=[];if(job.status==='ready')registered=toolMaterials(job.id,[{file:path.join(DATA,'canvas-audio',job.id,'audio.wav'),name:'Osmanthus-'+(route.endsWith('transcribe')?'字幕原声':'分离原声')+'.wav'}],'audio');return send(200,{job,materials:registered});
   }
+  if(method==='POST'&&route==='/api/mv-director/open'){
+   const {project_id}=JSON.parse(await body(req));const p=requiredCanvas(project_id).project;validateServerProject(p);return send(200,{session:mvDirector.open(p)});
+  }
+  if(method==='POST'&&route==='/api/mv-director/canvas'){
+   const {session_id}=JSON.parse(await body(req)),s=mvDirector.get(session_id);if(!s)return send(404,{error:'找不到MV方案'});
+   const project=clone(requiredCanvas(s.project_id).project);validateServerProject(project);let canvas=createCanvasDocument(project.studio?.canvas||{});
+   const nodes=[];for(const item of s.plan?[...s.plan.characters,...s.plan.scenes,...s.plan.shots]:[]){const p=s.previews[item.id],material=p&&materials.get(p.materialId);if(material)nodes.push({id:'director-'+p.imageId,type:'image',title:item.name,content:item.description,asset:{id:material.id,url:material.url,name:material.name}});}
+   if(s.generated){const asset=mvDirector.asset(s.generated.id);if(asset){const media=toolMaterials(s.generated.id,[{file:asset.file,name:s.title+'-MV.mp4'}],'director')[0];nodes.push({id:'director-movie-'+s.generated.id,type:'video',title:s.title+' · MV',asset:{id:media.id,url:media.url,name:media.name,duration:s.generated.duration}});}}
+   const offset=canvas.nodes.reduce((max,n)=>Math.max(max,n.y+n.height),0)+80;
+   for(const [i,node] of nodes.entries())if(!canvas.nodes.some(n=>n.id===node.id))canvas=addNode(canvas,{...node,x:(i%4)*380,y:offset+Math.floor(i/4)*310});
+   project.studio={...project.studio,canvas,freeCanvas:true,directorSession:s.id,ratio:s.ratio||project.studio?.ratio||'16:9'};persistProject(project);
+   return send(200,{url:`/index.html?canvas=${project.id}&director=${s.id}#canvas`});
+  }
+  if(method==='GET'&&route==='/api/mv-director')return send(200,{sessions:mvDirector.list()});
+  if(method==='POST'&&route==='/api/mv-director/jobs')return send(202,{job:mvDirector.start(JSON.parse(await body(req)))});
+  if(method==='POST'&&route==='/api/mv-director/recover'){const {job_id}=JSON.parse(await body(req));return send(202,{job:mvDirector.recover(job_id)});}
+  const directorJob=route.match(/^\/api\/mv-director\/jobs\/([a-f0-9-]{36})$/);
+  if(method==='GET'&&directorJob){const job=mvDirector.job(directorJob[1]);return job?send(200,{job}):send(404,{error:'找不到MV任务'});}
+  const directorSession=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})(\/quote)?$/);
+  if(method==='GET'&&directorSession){const session=mvDirector.get(directorSession[1]);if(!session)return send(404,{error:'找不到MV方案'});return send(200,directorSession[2]?{estimate:mvDirector.quote(session.id,u.searchParams.get('kind'))}:{session});}
   if(method==='POST'&&route==='/api/ai-mv/plan'){
    const {project,request_id,instruction,duration=10,start=project?.start,ratio=project?.studio?.ratio||'16:9'}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
    validateServerProject(project);if(project.source.id==='sample')return send(400,{error:'请先选择自己的歌曲或上传音频'});
@@ -299,6 +321,8 @@ export function createServer(){return http.createServer(async(req,res)=>{
    if(method==='POST'&&op==='finish'){if(j.status!=='frames')return send(409,{error:'任务状态不允许重复合成'});if(j.received!==j.total)return send(409,{error:'画面还没有完整上传，请手动重试'});encode(j);return send(202,clientJob(j));}
   }
   if(method==='GET'||method==='HEAD'){
+   const directorMedia=route.match(/^\/files\/mv-director\/([a-f0-9-]{36})\/mv\.mp4$/);
+   if(directorMedia){const asset=mvDirector.asset(directorMedia[1]);return asset?serveFile(req,res,asset.file,'video/mp4'):send(404,{error:'MV尚未完成或文件校验失败'});}
    const generatedImage=route.match(/^\/files\/aliyun-image\/([a-f0-9-]{36})\/image\.png$/);if(generatedImage){const asset=imageModel.asset(generatedImage[1]);return asset?serveFile(req,res,asset.file,'image/png'):send(404,{error:'图片不存在'});}
    const generatedSpeech=route.match(/^\/files\/aliyun-speech\/([a-f0-9-]{36})\/audio\.wav$/);if(generatedSpeech){const asset=speechModel.asset(generatedSpeech[1]);return asset?serveFile(req,res,asset.file,'audio/wav'):send(404,{error:'语音不存在'});}
    const visionFile=route.match(/^\/files\/canvas-vision\/([a-f0-9-]{36})\/([A-Za-z0-9_.-]+\.png)$/);if(visionFile){const asset=canvasVision.asset(visionFile[1],visionFile[2]);return asset?serveFile(req,res,asset.file,'image/png'):send(404,{error:'图片不存在'});}
@@ -310,7 +334,7 @@ export function createServer(){return http.createServer(async(req,res)=>{
    let file;if(route.startsWith('/files/materials/')){const found=materials.asset(decodeURIComponent(route.slice('/files/materials/'.length)));if(!found)return send(404,{error:'Not found'});return serveFile(req,res,found.file,found.mime);}
    if(route.startsWith('/files/uploads/')){const name=decodeURIComponent(route.slice(15));if(!/^[a-f0-9-]{36}\.[a-z0-9]+$/.test(name))return send(404,{error:'Not found'});file=path.join(DATA,'uploads',name);}
    else if(/^\/files\/jobs\/[a-f0-9-]{36}\/mv\.mp4$/.test(route)){let asset;try{asset=resolveCanvasAsset('mv:'+route.split('/')[3]);}catch{}return asset?serveFile(req,res,asset.file,'video/mp4'):send(404,{error:'成片不存在或校验失败'});}
-   else{const name=decodeURIComponent(route==='/'?'/index.html':route);file=path.resolve(PUBLIC,'.'+name);if(!file.startsWith(PUBLIC+path.sep))return send(404,{error:'Not found'});}
+   else{const name=decodeURIComponent(route==='/'?'/director.html':route);file=path.resolve(PUBLIC,'.'+name);if(!file.startsWith(PUBLIC+path.sep))return send(404,{error:'Not found'});}
    return serveFile(req,res,file);
   }
   send(404,{error:'这个操作暂不可用'});
