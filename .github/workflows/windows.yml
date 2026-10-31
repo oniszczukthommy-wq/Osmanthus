@@ -53,7 +53,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: powershell
         run: |
-          & ./scripts/windows.ps1 -Action setup
+          & ./Setup-Windows.cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & ./scripts/install-audio.ps1
+          try {
+            & ./.venv/Scripts/python.exe -X utf8 music-workbench/tools/osmanthus_web.py start
+            if ($LASTEXITCODE -ne 0) { throw 'The installed Windows environment did not start.' }
+          } finally {
+            & ./Stop-Osmanthus.cmd
+            if ($LASTEXITCODE -ne 0) { throw 'The installed Windows environment did not stop.' }
+          }
+          & ./Install-Audio-Tools.cmd
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
