@@ -8,7 +8,8 @@ import {findExecutable,mediaTools,readOptionalEnv} from '../runtime-config.mjs';
 function sandbox(t){const root=fs.mkdtempSync(path.join(os.tmpdir(),'osmanthus-runtime-'));t.after(()=>fs.rmSync(root,{recursive:true,force:true}));return root;}
 function executable(root,name){const file=path.join(root,name);fs.writeFileSync(file,'fixture');fs.chmodSync(file,0o755);return file;}
 test('media executables resolve from configured paths or PATH, with sibling ffprobe fallback',t=>{
- const root=sandbox(t),ff=executable(root,'ffmpeg'),fp=executable(root,'ffprobe');
+ const extension=process.platform==='win32'?'.exe':'';
+ const root=sandbox(t),ff=executable(root,'ffmpeg'+extension),fp=executable(root,'ffprobe'+extension);
  assert.equal(findExecutable('ffmpeg',undefined,{PATH:root}),ff);
  assert.deepEqual(mediaTools({PATH:root}),{ffmpeg:ff,ffprobe:fp});
  assert.deepEqual(mediaTools({PATH:'',FFMPEG_BIN:ff}),{ffmpeg:ff,ffprobe:fp});
