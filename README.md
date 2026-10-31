@@ -2,6 +2,8 @@
 
 **AI 音乐与 MV 创作工作台 · Open-source music and music-video workspace**
 
+[项目展示与用户流程](https://github.com/oniszczukthommy-wq/ai-music-workbench-showcase) · [好友临时体验网关说明](music-workbench/tools/FRIEND_DEMO.md)
+
 面向懂一些音乐、希望借助 AI 完成歌曲和编配的人。你可以复用、修改和二次开发本项目的原创代码，许可为 [MIT](LICENSE)；完整范围见 [LICENSE_SCOPE.md](LICENSE_SCOPE.md)。
 
 ## 创作流程

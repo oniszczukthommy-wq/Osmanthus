@@ -2,7 +2,10 @@
   "source_commit": "6e5ad58",
   "included_original_files": [
     ".gitignore",
+    "music-workbench/tools/FRIEND_DEMO.md",
+    "music-workbench/tools/osmanthus_share_gateway.mjs",
     "music-workbench/tools/osmanthus_web.py",
+    "music-workbench/tools/test_osmanthus_share_gateway.mjs",
     "music-workbench/validation/.env.example",
     "music-workbench/validation/audio-runtime/manifest.json",
     "music-workbench/validation/audio-separation/edit_one_stem.py",
