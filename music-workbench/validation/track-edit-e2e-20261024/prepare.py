@@ -1,6 +1,7 @@
 """Prepare a real YinChao song for the shared-project audio edit acceptance."""
+from runtime_support import file_lock as fcntl, media_binary
 from pathlib import Path
-import argparse, subprocess, os, fcntl
+import argparse, subprocess, os
 import hashlib, json, time
 import numpy as np
 import soundfile as sf
@@ -35,7 +36,7 @@ def main():
     audio, sr = sf.read(SOURCE, dtype='float32', always_2d=True)
     if sr!=44100 or audio.shape[1]!=2:
         working=DATA/'working-input.wav'
-        ffmpeg=ROOT.parent/'audiocraft/conda-env/bin/ffmpeg'
+        ffmpeg=media_binary('ffmpeg')
         subprocess.run([str(ffmpeg),'-nostdin','-y','-v','error','-i',str(SOURCE),'-ar','44100','-ac','2',str(working)],check=True,capture_output=True)
         audio,sr=sf.read(working,dtype='float32',always_2d=True)
     model = get_model('htdemucs').eval()

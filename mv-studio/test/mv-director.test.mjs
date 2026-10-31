@@ -1,3 +1,4 @@
+import {mediaTools} from '../runtime-config.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -29,7 +30,7 @@ test('角色修改影响引用该角色的镜头；时间和结构由服务器�
   assert.throws(()=>affectedShots(p,'missing'));const invalid=plan(slots);invalid.shots[0].sceneId='not-a-scene';assert.throws(()=>validateCreativePlan(invalid,slots));
 });
 function fixture(t,{budget=100,videoBudget=budget,brokenModel=false,duration=16}={}){
-  const data=fs.mkdtempSync(path.join(os.tmpdir(),'osmanthus-director-'));t.after(()=>fs.rmSync(data,{recursive:true,force:true}));
+  const data=fs.mkdtempSync(path.join(os.tmpdir(),'osmanthus 中文 director-'));t.after(()=>fs.rmSync(data,{recursive:true,force:true}));
   const audio=path.join(data,'song.wav');encode(['-f','lavfi','-i','sine=frequency=330:sample_rate=16000','-t',String(duration),audio]);
   const imageFile=path.join(data,'frame.png');encode(['-f','lavfi','-i','color=c=blue:s=1280x720','-frames:v','1',imageFile]);
   const source={id:crypto.randomUUID()+'.wav',duration,url:'/files/uploads/song.wav',name:'测试歌曲'},p={id:crypto.randomUUID(),title:'测试歌曲',source,lyrics:[{start:1,end:5,text:'测试歌词'},{start:8,end:12,text:'新的歌词'}],manualLyrics:'测试歌词\n新的歌词'};

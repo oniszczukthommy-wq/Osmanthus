@@ -17,3 +17,7 @@ MiniMax/YinChao/DeepSeek/Aliyun services require your own accounts, keys and quo
 External OiiOii media and prompt catalogs are not distributed. Legacy catalog module names remain as empty compatibility interfaces; the current core MV interface does not load preset catalogs. The compilation/helpers around user-provided data remain original software.
 
 The composition knowledge collection and book-reference archive used during private research are not included in this public snapshot. For optional upstream skills, evaluate the upstream license and exclusions yourself: https://github.com/jtydhr88/music-composition-skills .
+
+## Portable runtime dependencies
+
+The Windows/core installer uses NumPy (BSD-3-Clause), SoundFile (BSD-3-Clause; bundled libsndfile keeps its own LGPL terms), Pillow (HPND), psutil (BSD-3-Clause), and Portalocker (BSD-3-Clause on Windows). Their transitive dependencies retain their upstream licenses. The optional separation installer uses PyTorch / torchaudio (BSD-style) and Demucs (MIT); model weights remain subject to upstream terms and are not included in this repository.

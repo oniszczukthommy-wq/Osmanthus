@@ -1,6 +1,7 @@
 """Immutable local share snapshots; no upload or invented public share links."""
 from __future__ import annotations
-import copy,fcntl,hashlib,json,os,subprocess,tempfile,threading,time,uuid
+from runtime_support import file_lock as fcntl, media_binary
+import copy, hashlib, json, os, subprocess, tempfile, threading, time, uuid
 from types import SimpleNamespace
 from pathlib import Path
 import numpy as np
@@ -36,7 +37,7 @@ def text_field(body,name,default,limit,required=False):
 class ShareManager:
     def __init__(self,root=ROOT,ffmpeg=None):
         self.root=Path(root);self.directory=self.root/'shares';self.directory.mkdir(parents=True,exist_ok=True)
-        self.ffmpeg=Path(ffmpeg) if ffmpeg else Path(__file__).resolve().parent.parent/'audiocraft/conda-env/bin/ffmpeg'
+        self.ffmpeg=Path(ffmpeg) if ffmpeg else media_binary('ffmpeg')
         self.lock=threading.RLock()
 
     def read(self,identifier):

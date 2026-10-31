@@ -1,10 +1,11 @@
 """Local immutable singer candidates; creation never modifies the live mixer."""
+from runtime_support import check_process, file_lock as fcntl, venv_python
 from pathlib import Path
-import argparse,fcntl,hashlib,json,os,shutil,subprocess,threading,time,uuid
+import argparse, hashlib, json, os, shutil, subprocess, threading, time, uuid
 import numpy as np,soundfile as sf
 from project import ROOT,save_json
 from scores import Scores,BASE as SCORE_BASE
-BASE=ROOT.parent/'vocal-resinging-20261025';JOBS=ROOT/'vocal-jobs';PYTHON=SCORE_BASE/'.venv/bin/python';ENGINE='qixuan-score-resinging-1'
+BASE=ROOT.parent/'vocal-resinging-20261025';JOBS=ROOT/'vocal-jobs';PYTHON=venv_python(SCORE_BASE/'.venv');ENGINE='qixuan-score-resinging-1'
 PRESETS=[{'id':'qixuan-2.7.0','name':'绮萱 · 清亮女声','enabled':False,'reason':'用户反馈声音机械、不自然，已停用此方案','attribution':'AI 合成；绮萱；DiffSinger；声码器 OpenVPI Team','scope':'仅保留实验记录'}]
 
 def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -46,7 +47,7 @@ class Vocals:
   stage=state['stage'];self.children=[p for p in self.children if p.poll() is None]
   if stage in ('queued','synthesizing','preparing'):
    try:
-    if state.get('pid'):os.kill(state['pid'],0)
+    if state.get('pid'):check_process(state['pid'])
     elif time.time()-state['created_at']>15:stage='interrupted'
    except ProcessLookupError:stage='interrupted'
   result={k:state[k] for k in ('id','project_id','preset_id','created_at')};result.update(stage=stage,elapsed_seconds=round((state.get('finished_at') or time.time())-state['created_at'],2),quality_accepted=False)

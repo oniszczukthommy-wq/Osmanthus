@@ -1,0 +1,59 @@
+name: Windows and portable startup
+on:
+  push:
+    branches: [main, 'codex/windows-support']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      MV_DISABLE_MODELS: '1'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: FFmpeg on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ffmpeg --no-progress -y
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: FFmpeg and Chinese subtitle font on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk
+      - name: Install core Python dependencies
+        run: python -m pip install -r music-workbench/requirements-core.txt
+      - name: Parse the Windows installer
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $tokens=$null; $parseErrors=$null
+          [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path 'scripts/windows.ps1'),[ref]$tokens,[ref]$parseErrors) | Out-Null
+          if ($parseErrors.Count) { $parseErrors | Out-String | Write-Error; exit 1 }
+      - name: Fresh checkout, file locks, music edit and WAV / MP3 export
+        run: python -X utf8 tests/test_portable_startup.py
+      - name: MV media and subtitle export with real FFmpeg (mocked model responses)
+        working-directory: mv-studio
+        run: node --test --test-concurrency=1 test/runtime-config.test.mjs test/subtitle-fonts.test.mjs test/canvas-video-editor.test.mjs test/music-bridge.test.mjs test/mv-director.test.mjs
+      - name: Validate Windows setup script and optional audio tool imports
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & ./scripts/windows.ps1 -Action setup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & ./scripts/install-audio.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

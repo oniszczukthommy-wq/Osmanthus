@@ -3,8 +3,9 @@
 Audio-derived chords/tempo are candidates, not a transcription ground truth.
 Original stems and saved user edits are never overwritten.
 """
+from runtime_support import file_lock as fcntl
 from pathlib import Path
-import argparse, fcntl, hashlib, itertools, json, os, subprocess, tempfile, time
+import argparse, hashlib, itertools, json, os, subprocess, tempfile, time
 import numpy as np
 import soundfile as sf
 from project import Project, ROOT, save_json

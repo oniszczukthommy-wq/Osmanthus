@@ -1,6 +1,7 @@
 """Short local microphone transcription; never executes or applies the transcript."""
 from __future__ import annotations
-import argparse,fcntl,hashlib,json,math,os,subprocess,threading,time,uuid,wave
+from runtime_support import check_process, file_lock as fcntl, media_binary, venv_python
+import argparse, hashlib, json, math, os, subprocess, threading, time, uuid, wave
 from pathlib import Path
 ROOT=Path(os.environ.get('MUSIC_WORKBENCH_ROOT',str(Path(__file__).resolve().parent))).resolve()
 
@@ -9,9 +10,9 @@ def save_json(path,value):
     temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2));os.replace(temporary,path)
 
 BASE=Path(__file__).resolve().parent.parent/'speech-input-20261028'
-PYTHON=BASE/'.venv/bin/python'
+PYTHON=venv_python(BASE/'.venv')
 MODEL=BASE/'model-base'
-FFMPEG=Path(__file__).resolve().parent.parent/'audiocraft/conda-env/bin/ffmpeg'
+FFMPEG=media_binary('ffmpeg')
 MAX_BYTES=8*1024*1024
 MAX_SECONDS=60
 ENGINE='faster-whisper-base-1.2.1-cpu-int8'
@@ -24,7 +25,7 @@ def valid_id(value):
 
 def alive(pid):
     if not isinstance(pid,int) or isinstance(pid,bool):return False
-    try:os.kill(pid,0);return True
+    try:check_process(pid);return True
     except (OSError,OverflowError):return False
 
 class SpeechInput:

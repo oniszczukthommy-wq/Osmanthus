@@ -1,12 +1,13 @@
 """Revoice a known authored piano harmony as playable, strummed guitar.
 
 This does not transcribe separated audio. Source harmony remains a hypothesis
+from runtime_support import file_lock as fcntl
 from the original piano job. MIDI/string constraints are measured separately
 from the human listening verdict.
 """
 from copy import deepcopy
 from pathlib import Path
-import fcntl, hashlib, itertools, json, os, subprocess, tempfile, time
+import hashlib, itertools, json, os, subprocess, tempfile, time
 import numpy as np
 import soundfile as sf
 from project import Project, ROOT, save_json

@@ -1,6 +1,7 @@
 """Fixed-target separation estimates; their output does not prove presence."""
+from runtime_support import file_lock as fcntl
 from pathlib import Path
-import argparse, fcntl, hashlib, json, os, time
+import argparse, hashlib, json, os, time
 import numpy as np
 import soundfile as sf
 from project import save_json

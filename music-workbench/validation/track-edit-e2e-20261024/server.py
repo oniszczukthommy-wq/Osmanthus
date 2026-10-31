@@ -1,5 +1,6 @@
 """Loopback-only shared audio project; dialogue and manual edit share one reducer."""
 from __future__ import annotations
+from runtime_support import media_binary
 import errno, hashlib, json, mimetypes, os, re, subprocess, tempfile, threading, time, uuid
 import urllib.error, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -7,6 +8,9 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 import numpy as np
 import soundfile as sf
+from runtime_support import load_env
+load_env(Path(__file__).resolve().parent.parent/'.env.local')
+from empty_project import EmptyProject
 from project import Project, ROOT, DATA, save_json
 os.environ.setdefault('MUSIC_WORKBENCH_ROOT',str(ROOT))
 from workflow import Workflow, STREAM, PROJECTS, valid_id
@@ -29,21 +33,17 @@ from sections import Sections, resolve_reference
 from score_review import ScoreReviews
 from candidate_review import CandidateReviews
 
-for line in (ROOT.parent/'.env.local').read_text().splitlines():
-    if line.strip() and not line.lstrip().startswith('#') and '=' in line:
-        name,value=line.split('=',1)
-        os.environ.setdefault(name.strip(),value.strip().strip('\"\''))
 
 LOCK=threading.RLock()
 PORT=int(os.environ.get('MUSIC_EDITOR_PORT','8603'))
 MV_PORT=int(os.environ.get('MUSIC_MV_PORT','8792'))
 DATA=Path(os.environ.get('MUSIC_EDITOR_DATA_DIR',str(DATA)))
 LEGACY_DATA=DATA
-LEGACY_ID=json.loads((LEGACY_DATA/'project.json').read_text())['id']
+LEGACY_ID=json.loads((LEGACY_DATA/'project.json').read_text())['id'] if (LEGACY_DATA/'project.json').is_file() else None
 ACTIVE_FILE=(DATA.parent if os.environ.get('MUSIC_EDITOR_DATA_DIR') else ROOT)/'active-project.json'
 
 def project_directory(identifier):
-    if identifier==LEGACY_ID:return LEGACY_DATA
+    if LEGACY_ID and identifier==LEGACY_ID:return LEGACY_DATA
     if not valid_id(identifier):raise ValueError('工程标识无效')
     directory=PROJECTS/identifier/'data'
     if not (directory/'project.json').exists():raise ValueError('该歌曲的工程尚未准备好')
@@ -54,7 +54,7 @@ def project_directory(identifier):
 if ACTIVE_FILE.exists():
     try:DATA=project_directory(json.loads(ACTIVE_FILE.read_text())['id'])
     except (ValueError,KeyError):DATA=LEGACY_DATA
-PROJECT=Project(DATA)
+PROJECT=Project(DATA) if (DATA/'preparation.json').is_file() else EmptyProject(DATA)
 ARTWORK=Artwork()
 SHARES=ShareManager()
 WORKFLOW=Workflow()
@@ -73,7 +73,7 @@ CONVERSIONS=Conversions()
 SECTIONS=Sections()
 SCORE_REVIEWS=ScoreReviews(SCORES)
 CANDIDATE_REVIEWS=CandidateReviews()
-FFMPEG=ROOT.parent/'audiocraft/conda-env/bin/ffmpeg'
+FFMPEG=media_binary('ffmpeg')
 MV_HANDOFFS=MVHandoffs(ROOT,FFMPEG)
 EXPORTS=DATA.parent/'exports' if os.environ.get('MUSIC_EDITOR_DATA_DIR') else ROOT/'exports'
 EXPORTS.mkdir(exist_ok=True)

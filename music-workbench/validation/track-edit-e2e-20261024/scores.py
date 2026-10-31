@@ -1,9 +1,10 @@
 """Durable, read-only lead-vocal score jobs, independent of mixer state."""
+from runtime_support import check_process, file_lock as fcntl, venv_python
 from pathlib import Path
-import argparse,fcntl,hashlib,json,math,os,re,shutil,subprocess,threading,time,uuid
+import argparse, hashlib, json, math, os, re, shutil, subprocess, threading, time, uuid
 from project import ROOT,save_json
 from vocal_sources import lead_vocal_source
-BASE=ROOT.parent/'vocal-score-20261024';PYTHON=BASE/'.venv/bin/python';JOBS=ROOT/'score-jobs';ENGINE='singing-score-review-2'
+BASE=ROOT.parent/'vocal-score-20261024';PYTHON=venv_python(BASE/'.venv');JOBS=ROOT/'score-jobs';ENGINE='singing-score-review-2'
 
 def valid_id(value):
  try:return str(uuid.UUID(value))==value
@@ -127,7 +128,7 @@ class Scores:
   stage=state['stage'];self.children=[p for p in self.children if p.poll() is None]
   if stage in ('queued','transcribing','aligning','refining','checking','engraving'):
    try:
-    if state.get('pid'):os.kill(state['pid'],0)
+    if state.get('pid'):check_process(state['pid'])
     elif time.time()-state['created_at']>15:stage='interrupted'
    except ProcessLookupError:stage='interrupted'
   result={k:state[k] for k in ('id','project_id','created_at','basis')};result.update(stage=stage,elapsed_seconds=round((state.get('finished_at') or time.time())-state['created_at'],2),accuracy_accepted=False)

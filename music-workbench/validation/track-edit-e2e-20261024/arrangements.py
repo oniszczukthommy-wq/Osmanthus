@@ -1,6 +1,7 @@
 """Durable local piano jobs; creating a candidate never edits a song project."""
+from runtime_support import check_process, file_lock as fcntl, venv_python
 from pathlib import Path
-import argparse, fcntl, hashlib, json, math, os, subprocess, threading, time, uuid
+import argparse, hashlib, json, math, os, subprocess, threading, time, uuid
 from project import ROOT, save_json
 
 JOBS=ROOT/'arrangement-jobs'
@@ -25,7 +26,7 @@ class Arrangements:
         stage=state['stage']
         if stage in ('queued','analyzing','rendering'):
             try:
-                if state.get('pid'):os.kill(state['pid'],0)
+                if state.get('pid'):check_process(state['pid'])
                 elif time.time()-state['created_at']>10:stage='interrupted'
             except ProcessLookupError:stage='interrupted'
         result={k:state[k] for k in ('id','project_id','start_seconds','end_seconds','created_at')}
@@ -92,7 +93,7 @@ class Arrangements:
             save_json(directory/'state.json',state)
             try:
                 with (directory/'worker.log').open('a') as log:
-                    child=subprocess.Popen([str(CODE_ROOT.parent/'audio-separation/.venv/bin/python'),str(CODE_ROOT/'arrangements.py'),
+                    child=subprocess.Popen([str(venv_python(CODE_ROOT.parent/'audio-separation/.venv', 'OSMANTHUS_SEPARATION_PYTHON', fallback=True)),str(CODE_ROOT/'arrangements.py'),
                                             '--run-job',state['id']],stdout=log,stderr=log,start_new_session=True,
                                             env={**os.environ,'MUSIC_WORKBENCH_ROOT':str(ROOT),'OPENBLAS_NUM_THREADS':'1','OMP_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1'})
                 self.children.append(child)

@@ -23,10 +23,16 @@
 | MV 独立界面、画布、素材管理 | Node.js 22+；可先关闭模型启动。 |
 | 本地剪辑、音频处理、MP4 导出 | 安装 FFmpeg 和 ffprobe。 |
 | AI 图片、分镜、视频生成 | 配置自己的 DeepSeek / 阿里万相等账号与 Key，费用由使用者承担。 |
-| 完整音乐工作台、歌曲生成和分轨 | 需另配 Python 环境、YinChao/DeepSeek Key、自有音频工程；不是克隆即可一键全功能运行。 |
+| 音乐工作台、歌曲生成 | 基础 Python 安装及自己的 YinChao/DeepSeek Key；首次可空白启动。新歌分轨另装 Demucs。 |
 | 演唱谱、配器、换声、离线识别 | 需分别配置模型、音源和工具，遵守各自许可并验证效果。 |
 
 本项目以本机浏览器原型为目标；没有注册、订阅计费或多租户隔离，不是开箱即用的公网 SaaS 部署方案。
+
+## Windows 本机运行
+
+完整解压后，按 [Windows 安装说明](docs/WINDOWS.md) 安装 Python 3.12、Node.js 22+ 和 FFmpeg，运行 `Setup-Windows.cmd`；填写自己的 `.env`，再双击 `Start-Osmanthus.cmd`。统一入口为 <http://127.0.0.1:8603/>。停止用 `Stop-Osmanthus.cmd`，依赖检查用 `Check-Windows.cmd`。
+
+首次启动不需要原电脑的歌曲文件。基础包支持音乐与 MV 网页、云端生成接入、已有工程混音和本地导出；新歌分轨可另运行 `Install-Audio-Tools.cmd`。出谱、歌词对齐、换声及重编配仍需专用模型与音源，不能把启动通过等同于全部模型在 Windows 上已验收。
 
 ## 快速开始：独立 MV 工作台
 
@@ -48,7 +54,7 @@ MV_DISABLE_MODELS=1 npm start
 
 `music-workbench/` 包含原型源码。现有运行环境的统一入口是 `python3 music-workbench/tools/osmanthus_web.py start`，默认音乐端口 8603，MV 挂载在 `/mv/`。
 
-新电脑需要自行恢复 `validation/audio-separation/.venv`、FFmpeg、相应模型与音源，配置 `music-workbench/validation/.env.local`，并用自己的音频准备 `validation/track-edit-e2e-20261024/data/` 工程。原电脑的工程、分轨 WAV、音色试听、缓存和 API Key 都不在此仓库中。目前未提供覆盖所有音乐依赖的自动安装与首次空工程初始化脚本。不要把个人数据或他人的 Key 当作安装依赖。
+新电脑安装 `music-workbench/requirements-core.txt` 后，可以用空白工作台启动，不要求已有歌曲工程。启动器读取根目录 `.env`，也兼容 `music-workbench/validation/.env.local`。支持从 PATH 或配置解析 FFmpeg，Windows / macOS 的虚拟环境路径分别处理。原电脑的歌曲、分轨 WAV、音色试听、缓存和 API Key 不在仓库中；高级本地模型和音源需按许可另行准备。
 
 ## 目录
 

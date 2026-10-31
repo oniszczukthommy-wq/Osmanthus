@@ -1,17 +1,18 @@
 """Full-song voice conversion candidates, independent of the live project edits."""
+from runtime_support import check_process, file_lock as fcntl, venv_python
 from pathlib import Path
-import argparse,fcntl,hashlib,json,os,subprocess,threading,time,uuid
+import argparse, hashlib, json, os, subprocess, threading, time, uuid
 import numpy as np,soundfile as sf
 from project import ROOT,save_json,Project
 from scores import valid_id
 from voice_library import VoiceLibrary
 
 BASE=ROOT.parent/'vocal-resinging-20261025';JOBS=ROOT/'svc-jobs'
-PYTHON=ROOT.parent/'seed-vc-20261025/.venv/bin/python'
+PYTHON=venv_python(ROOT.parent/'seed-vc-20261025/.venv')
 ENGINE='yingmusic-full-hybrid-50-1';VOICE='226869000163476'
 def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 def alive(pid):
-    try:os.kill(int(pid),0);return True
+    try:check_process(int(pid));return True
     except (ProcessLookupError,ValueError,TypeError):return False
 
 class Conversions:
@@ -81,7 +82,7 @@ class Conversions:
                    'created_at':time.time(),'stage':'queued','render_dir':str(render.resolve()),'external_pid':external}
             save_json(folder/'state.json',state)
             with (folder/'worker.log').open('a') as log:
-                child=subprocess.Popen([os.path.abspath(ROOT.parent/'audio-separation/.venv/bin/python'),str(ROOT/'svc.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,
+                child=subprocess.Popen([os.path.abspath(venv_python(ROOT.parent/'audio-separation/.venv', 'OSMANTHUS_SEPARATION_PYTHON', fallback=True)),str(ROOT/'svc.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,
                     env={**os.environ,'OPENBLAS_NUM_THREADS':'1','OMP_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1'})
             self.children.append(child);return self.public(state)
     def asset(self,identifier,name):

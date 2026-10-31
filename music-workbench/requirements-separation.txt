@@ -1,0 +1,2 @@
+# Install the matched CPU torch/torchaudio pair first; see scripts/install-audio.ps1.
+demucs==4.0.1

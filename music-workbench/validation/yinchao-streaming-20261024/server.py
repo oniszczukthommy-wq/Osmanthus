@@ -16,15 +16,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parent
-SHARED=ROOT.parent/'provider-song-comparison-20261024'
-sys.path.insert(0,str(SHARED))
-from run_comparison import load_env,request_json,download
+sys.path.insert(0,str(ROOT.parent/'track-edit-e2e-20261024'))
+from provider_http import load_env,request_json,download
 
 PORT=int(os.environ.get('YINCHAO_STREAM_PORT','8602'))
 LOCK=threading.RLock()
 JOBS:dict[str,dict]={}
 load_env()
-EXAMPLE=json.loads((SHARED/'cases.json').read_text(encoding='utf-8'))['cases'][0]
+EXAMPLE={'title':'新的歌曲','style_prompt':'温暖的中文流行歌曲，原声吉他与自然人声','lyrics':''}
 
 
 def persist(job:dict)->None:

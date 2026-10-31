@@ -3,9 +3,10 @@
 Analysis provenance and listening acceptance belong to their exact source/range.
 Creating a candidate registers an asset, never changes the user's mix or history.
 """
+from runtime_support import file_lock as fcntl
 from copy import deepcopy
 from pathlib import Path
-import fcntl
+
 import hashlib
 import json
 import math

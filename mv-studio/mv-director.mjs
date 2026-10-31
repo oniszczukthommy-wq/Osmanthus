@@ -13,9 +13,9 @@ const fail = (message, status = 400) => Object.assign(Error(message), {status});
 const terminal = new Set(['ready', 'failed', 'uncertain']);
 const write = (file, value) => { const tmp = file + '.' + crypto.randomUUID() + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(value), {mode:0o600}); fs.renameSync(tmp,file); };
 function read(file) { try { return JSON.parse(fs.readFileSync(file,'utf8')); } catch(e) { if(e.code === 'ENOENT') return null; throw fail('MV记录无法读取，未覆盖已有内容',409); } }
-function run(binary, args, {capture = false, limit = 20e6, timeout = 180000} = {}) {
+function run(binary, args, {capture = false, limit = 20e6, timeout = 180000, cwd} = {}) {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary,args,{stdio:['ignore',capture?'pipe':'ignore','pipe']}); const chunks=[]; let bytes=0, settled=false;
+    const child = spawn(binary,args,{cwd,stdio:['ignore',capture?'pipe':'ignore','pipe']}); const chunks=[]; let bytes=0, settled=false;
     const timer=setTimeout(()=>{child.kill('SIGKILL');finish(fail('本地媒体处理超时，已保留素材',504));},timeout);
     const finish=error=>{if(settled)return;settled=true;clearTimeout(timer);error?reject(error):resolve(Buffer.concat(chunks));};
     child.stdout?.on('data',chunk=>{bytes+=chunk.length;if(bytes>limit){child.kill('SIGKILL');finish(fail('媒体分析超出容量限制'));}else chunks.push(chunk);});
@@ -112,7 +112,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
       s.previews[item.id]={signature,imageId,url:result.url,materialId:material.id};saveSession(s);
     }
   }
-  const escapeFilter=value=>value.replaceAll('\\','\\\\').replaceAll(':','\\:').replaceAll("'","'\\''");
+
   async function compose(s,j){
     const directory=path.join(root,'media',j.id);fs.mkdirSync(directory,{recursive:true});
     const format=getOutputFormat(s.ratio),partFiles=[];let frames=0;
@@ -127,10 +127,10 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     const lyrics=s.lyrics.filter(l=>l.end>s.range.start&&l.start<s.range.end);
     if(j.input.subtitles&&lyrics.length){
       const font=selectSubtitleFont(lyrics.map(l=>l.text).join('')),fontFile=path.join(directory,'subtitle-font'+path.extname(font.file));fs.copyFileSync(font.file,fontFile);
-      const filters=lyrics.map((l,i)=>{const textFile=path.join(directory,`lyric-${i}.txt`);fs.writeFileSync(textFile,l.text.replace(/[\r\n]+/g,' '));return `drawtext=fontfile='${escapeFilter(fontFile)}':textfile='${escapeFilter(textFile)}':expansion=none:fontsize=${Math.round(format.height*.042)}:fontcolor=white:borderw=2:bordercolor=black:x=(w-tw)/2:y=h-th-h*0.08:enable='between(t,${Math.max(0,l.start-s.range.start)},${Math.min(s.range.duration,l.end-s.range.start)})'`;});
+      const filters=lyrics.map((l,i)=>{const textFile=path.join(directory,`lyric-${i}.txt`);fs.writeFileSync(textFile,l.text.replace(/[\r\n]+/g,' '));return `drawtext=fontfile='${path.basename(fontFile)}':textfile='${path.basename(textFile)}':expansion=none:fontsize=${Math.round(format.height*.042)}:fontcolor=white:borderw=2:bordercolor=black:x=(w-tw)/2:y=h-th-h*0.08:enable='between(t,${Math.max(0,l.start-s.range.start)},${Math.min(s.range.duration,l.end-s.range.start)})'`;});
       args.push('-vf',filters.join(','),'-c:v','libx264','-preset','fast','-crf','20');
     }else args.push('-c:v','copy');
-    args.push('-c:a','aac','-b:a','192k','-movflags','+faststart',output);await run(ffmpeg,args,{timeout:600000});
+    args.push('-c:a','aac','-b:a','192k','-movflags','+faststart',output);await run(ffmpeg,args,{timeout:600000,cwd:directory});
     const info=probe(output),v=info.streams?.find(x=>x.codec_type==='video'),a=info.streams?.find(x=>x.codec_type==='audio');
     if(!v||!a||v.width!==format.width||v.height!==format.height||Math.abs(Number(info.format.duration)-s.range.duration)>.15)throw fail('成片时长或音画轨道校验未通过');
     const result={id:j.id,url:`/files/mv-director/${j.id}/mv.mp4`,duration:s.range.duration,sha256:hash(fs.readFileSync(output)),source_sha256:s.source_sha256,revision:s.revision,subtitles:!!j.input.subtitles,createdAt:new Date().toISOString()};

@@ -1,6 +1,7 @@
 """Read-only, durable lyric timing from the actual lead vocal, never mixer gain."""
+from runtime_support import check_process, file_lock as fcntl, media_binary
 from pathlib import Path
-import argparse, fcntl, hashlib, json, os, shutil, subprocess, threading, time, uuid
+import argparse, hashlib, json, os, shutil, subprocess, threading, time, uuid
 from project import ROOT, save_json
 from scores import source_context, valid_id, BASE, PYTHON
 from vocal_sources import lead_vocal_source
@@ -84,7 +85,7 @@ class Lyrics:
         stage=state['stage']
         if stage in ('queued','aligning'):
             try:
-                if state.get('pid'):os.kill(state['pid'],0)
+                if state.get('pid'):check_process(state['pid'])
                 elif time.time()-state['created_at']>15:stage='interrupted'
             except ProcessLookupError:stage='interrupted'
         result={k:state[k] for k in ('id','project_id','lyrics','basis','vocal_sha256','lyrics_sha256')}
@@ -196,7 +197,7 @@ def work_generated(state):
             expected,_=generated_context(job,audio)
             if any(state.get(k)!=v for k,v in expected.items()):raise ValueError('歌曲或歌词已改变，请重新同步')
             inputs=folder/'input';inputs.mkdir(exist_ok=True);target=inputs/'vocal.wav'
-            ffmpeg=ROOT.parent/'audiocraft/conda-env/bin/ffmpeg'
+            ffmpeg=media_binary('ffmpeg')
             result=subprocess.run([str(ffmpeg),'-v','error','-i',str(audio),'-ac','1','-ar','16000','-y',str(target)],capture_output=True,timeout=60)
             if result.returncode:raise ValueError('歌曲音频暂未读取完成，可重试歌词同步')
             info=sf.info(target);duration=info.frames/info.samplerate

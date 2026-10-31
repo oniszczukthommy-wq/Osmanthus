@@ -4,10 +4,11 @@ No synthesis or alignment is started here. Human boundary corrections are separa
 metadata and never mutate the mixer, waveform files, or its audio revision.
 """
 from __future__ import annotations
+from runtime_support import file_lock as fcntl
 from collections import Counter
 from copy import deepcopy
 from pathlib import Path
-import fcntl, hashlib, json, math, re, threading, time
+import hashlib, json, math, re, threading, time
 from project import ROOT, save_json
 
 ENGINE = 'lyric-anchored-sections-1'

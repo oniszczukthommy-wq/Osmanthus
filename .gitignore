@@ -40,3 +40,16 @@
 *.sfz
 /music-workbench/research/
 /research/
+
+# Fresh workspaces and runtime state are local, never source.
+**/active-project.json
+**/audits/
+**/arrangement-jobs/
+**/artwork-jobs/
+**/candidate-reviews/
+**/creation-jobs/
+**/lyric-jobs/
+**/score-jobs/
+**/speech-jobs/
+**/svc-jobs/
+**/vocal-jobs/

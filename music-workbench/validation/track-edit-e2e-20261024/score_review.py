@@ -4,10 +4,11 @@ Analysis and human correction are separate: a candidate is rendered from an
 existing score and becomes active only after an optimistic, durable save.
 """
 from __future__ import annotations
+from runtime_support import file_lock as fcntl
 from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-import argparse, fcntl, hashlib, json, math, os, subprocess, sys, threading, time, uuid
+import argparse, hashlib, json, math, os, subprocess, sys, threading, time, uuid
 
 SOURCE_FIELDS=('project_id','source_sha256','vocal_sha256','lyrics_sha256','basis','corrections_sha256')
 LOCK_FIELDS=('midi','start_seconds','end_seconds','lyric_index','start_beats','end_beats')
