@@ -1,0 +1,57 @@
+/* Shared visual values from the existing Osmanthus music workspace. */
+:root {
+  color-scheme:dark; --os-bg:#000; --os-surface:#101012; --os-card:#1a1a1d;
+  --os-control:#222224; --os-control-hover:#303032; --os-line:#2d2d30;
+  --os-muted:#98989f; --os-text:#eee; --os-accent:#f4f3ef; --os-error:#ffb3b6;
+  --os-font:Inter,-apple-system,BlinkMacSystemFont,"Helvetica Neue","PingFang SC","Microsoft YaHei",sans-serif;
+}
+/* Keep the canvas layout, tools and user-selected node colours. */
+body.osmanthus-video{--bg:var(--os-surface);--panel:var(--os-card);--line:var(--os-line);--text:var(--os-text);--muted:var(--os-muted);--gold:var(--os-accent);--pink:var(--os-accent);font-family:var(--os-font);color:var(--os-text);background-color:var(--os-surface)}
+.osmanthus-video button,.osmanthus-video input,.osmanthus-video textarea,.osmanthus-video select{font-family:var(--os-font)}
+.osmanthus-video .primary,.osmanthus-video .fc-topright .fc-pink,.osmanthus-video .fc-send{background:var(--os-accent);border-color:var(--os-accent);color:#141414;border-radius:22px}
+.osmanthus-video .primary:hover:not(:disabled),.osmanthus-video .fc-topright .fc-pink:hover:not(:disabled),.osmanthus-video .fc-send:hover:not(:disabled){background:#fff;color:#141414}
+.osmanthus-video .fc-projectbar,.osmanthus-video .fc-bottom-tools,.osmanthus-video .fc-right-tools,.osmanthus-video .fc-context,.osmanthus-video .fc-inspector,.osmanthus-video .fc-chat,.osmanthus-video dialog{background:#1a1a1df5;border-color:#333337;color:var(--os-text);box-shadow:0 12px 40px #0003}
+.osmanthus-video .fc-topright button:not(.fc-pink){background:var(--os-control);border-color:var(--os-line)}
+.osmanthus-video .fc-context>button:hover:not(:disabled){background:var(--os-control-hover)}
+.osmanthus-video button:focus-visible,.osmanthus-video a:focus-visible{outline:2px solid #a4a4ac;outline-offset:3px}
+.osmanthus-video input:focus-visible,.osmanthus-video textarea:focus-visible,.osmanthus-video select:focus-visible{outline:1px solid #77777f;border-color:#707078}
+.osmanthus-video input[type=range],.osmanthus-video input[type=checkbox]{accent-color:var(--os-accent)}
+/* Canvas chrome and editing dialogs use the same neutral control palette. */
+.osmanthus-video .fc-right-tools [data-fc-action=add-menu],
+.osmanthus-video .fc-bottom-tools button[aria-pressed=true]{background:var(--os-accent);color:#141414}
+.osmanthus-video .fc-right-tools [data-fc-action=add-menu]:hover{background:#fff;color:#141414}
+.osmanthus-video :is(.fc-generation-params,.fc-media-actions,.fc-selection-actions,.fc-project-list-tools) :is(button,select),
+.osmanthus-video .fc-chat-refs button,.osmanthus-video .fc-reference-slots button{background:var(--os-control);border-color:#414147;color:#c9c9cf}
+.osmanthus-video :is(.fc-compose-tools,.fc-prompt-tools,.fc-chat-heading) button:not(.fc-send){color:#a1a1aa}
+.osmanthus-video .fc-compose-tools>button:hover:not(.fc-send){background:var(--os-control-hover);color:#eee}
+.osmanthus-video .fc-project-list>article{background:var(--os-card);border-color:var(--os-line)}
+.osmanthus-video .fc-project-list>article>button{color:var(--os-text)}
+.osmanthus-video .fc-project-list>article>button>span,.osmanthus-video .fc-project-list>article>div>button{background:#29292d;color:#ccc}
+.osmanthus-video .fc-engine-overlay{background:var(--os-surface);border-color:var(--os-line)}
+.osmanthus-video .fc-engine-overlay>header button{color:#c4c4cb}
+.osmanthus-video :is(.canvas-editor-dialog,.cmedia-dialog,.aimv-dialog){background:var(--os-card);border-color:#39393f;color:var(--os-text);font-family:var(--os-font)}
+.osmanthus-video .canvas-editor-dialog{--cep-border:var(--os-line);--cep-muted:var(--os-muted)}
+.osmanthus-video :is(.canvas-editor-dialog,.cmedia-dialog,.aimv-dialog) button{background:var(--os-control);border-color:#3b3b41;color:#ddd;border-radius:18px}
+.osmanthus-video :is(.canvas-editor-dialog,.cmedia-dialog,.aimv-dialog) button:hover:not(:disabled){background:var(--os-control-hover);border-color:#57575f;color:#fff}
+.osmanthus-video :is(.canvas-editor-dialog,.cmedia-dialog,.aimv-dialog) :is(input[type=number],input[type=text],textarea,select){background:#141416;border-color:#39393f;color:var(--os-text)}
+.osmanthus-video :is(.canvas-editor-dialog,.cmedia-dialog,.aimv-dialog) :is(button,input,textarea,select,summary):focus-visible{outline:2px solid #909098;outline-offset:2px}
+.osmanthus-video .aimv-dialog :is(textarea,input):focus{outline-color:#909098}
+.osmanthus-video .canvas-editor-dialog :is(h3,label,.cep-note,.cep-check,.cep-clip-title span,.cep-preview-label>span,.cep-preview-label small,.cep-asset small,.cep-header small){color:#a5a5ae}
+.osmanthus-video .canvas-editor-dialog :is(.cep-asset strong,.cep-clip-title button){color:#ddd}
+.osmanthus-video .canvas-editor-dialog .cep-clip-title button[aria-pressed=true]{color:#fff}
+.osmanthus-video .canvas-editor-dialog :is(.cep-header,.cep-library,.cep-main>section+section,.cep-footer){border-color:var(--os-line)}
+.osmanthus-video .canvas-editor-dialog .cep-library{background:#151517}
+.osmanthus-video .canvas-editor-dialog :is(.cep-asset,.cep-clip,output){background:#242427;border-color:#3b3b41;color:#bdbdc6}
+.osmanthus-video .canvas-editor-dialog :is(.cep-asset.is-used,.cep-clip.is-active){background:#313135;border-color:#77777f}
+.osmanthus-video .canvas-editor-dialog .cep-asset-icon{background:#323237;color:#ccc}
+.osmanthus-video .canvas-editor-dialog .cep-preview{border-color:#37373d;background:#080809}
+.osmanthus-video .canvas-editor-dialog .cep-empty{border-color:#44444b;color:var(--os-muted)}
+.osmanthus-video .canvas-editor-dialog .cep-footer{background:#171719}
+.osmanthus-video .canvas-editor-dialog .cep-footer .cep-primary,
+.osmanthus-video .cmedia-dialog button.primary,.osmanthus-video .aimv-dialog .primary{background:var(--os-accent);border-color:transparent;color:#141414}
+.osmanthus-video .canvas-editor-dialog .cep-footer .cep-primary:hover:not(:disabled),
+.osmanthus-video .cmedia-dialog button.primary:hover:not(:disabled),.osmanthus-video .aimv-dialog .primary:hover:not(:disabled){background:#fff;color:#141414}
+.osmanthus-video .canvas-editor-dialog output.is-invalid{color:var(--os-error);border-color:#70464a;background:#301d21}
+.osmanthus-video .canvas-editor-dialog input[type=checkbox],.osmanthus-video .aimv-progress progress{accent-color:var(--os-accent)}
+.osmanthus-video :is(.aimv-plan,.aimv-progress,.cmedia-history,.cmedia-history article){border-color:var(--os-line)}
+.osmanthus-video .aimv-plan article{background:#242427}

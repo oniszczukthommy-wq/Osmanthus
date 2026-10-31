@@ -1,9 +1,35 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Osmanthus · 创作 MV</title><link rel="icon" href="./assets/brand/osmanthus-logo.png"><link rel="stylesheet" href="./mv-director.css"></head>
-<body><header class="top"><a id="music-home" class="brand"><img src="./assets/brand/osmanthus-logo.png" alt="Osmanthus 桂花标志"><strong>Osmanthus</strong><span>MV</span></a><nav><a href="./director.html">我的 MV</a><button id="advanced" hidden>精细编辑 ↗</button><a id="music-back">返回音乐</a></nav></header>
-<div class="song-bar" id="song-bar" hidden><div><strong id="song-title"></strong><span id="song-info"></span></div><audio id="music" controls preload="metadata"></audio><span id="playing-lyric" aria-live="off"></span></div>
-<main id="app"><p role="status">正在打开歌曲…</p></main><div id="notice" role="status" hidden></div>
-<dialog id="confirm"><form method="dialog"><h2 id="confirm-title"></h2><div id="confirm-body"></div><footer><button value="cancel">返回修改</button><button value="ok" class="primary">确认继续</button></footer></form></dialog>
-<dialog id="edit"><form id="edit-form"><h2 id="edit-title">修改方案</h2><p id="edit-impact"></p><label>描述你想怎么改<textarea id="edit-instruction" rows="4" maxlength="2000" placeholder="例如：保留角色，改成傍晚海边，镜头缓慢拉远" required></textarea></label><footer><button type="button" id="edit-cancel">取消</button><button class="primary" type="submit">应用修改</button></footer></form></dialog>
-<dialog id="share-dialog"><h2>分享 MV</h2><p>把这支 MV 发给朋友。对方需要能访问当前网站；本机地址仅在本机有效。</p><label>成片链接<input id="share-url" readonly></label><footer><button id="share-close">关闭</button><button id="share-system">系统分享</button><button id="share-copy" class="primary">复制链接</button></footer></dialog>
-<script type="module" src="./mv-director.js"></script></body></html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Osmanthus · 创作 MV</title>
+  <link rel="icon" href="./assets/brand/osmanthus-logo.png">
+  <link rel="stylesheet" href="./osmanthus-theme.css"><link rel="stylesheet" href="./mv-director.css">
+</head>
+<body class="osmanthus-director" id="mv-workbench">
+  <aside class="studio-sidebar" id="mv-sidebar" aria-label="工作台导航">
+    <div class="sidebar-top"><a id="music-home" class="brand" aria-label="Osmanthus 首页"><img src="./assets/brand/osmanthus-logo.png" alt="桂花与高音谱号标志" width="28" height="42"><strong>Osmanthus</strong></a><button id="sidebar-toggle" class="icon-button" type="button" aria-label="收起侧边栏" aria-expanded="true" aria-controls="mv-sidebar" title="收起侧边栏"><span data-icon="panel-close"></span></button></div>
+    <nav class="sidebar-nav">
+      <a id="nav-music-home" aria-label="首页" title="首页"><span data-icon="home"></span><span>首页</span></a>
+      <a id="nav-music-create" aria-label="创作音乐" title="创作音乐"><span data-icon="music"></span><span>创作音乐</span></a>
+      <div class="nav-divider" aria-hidden="true"></div>
+      <a id="nav-current-mv" aria-label="创作 MV" title="创作 MV" href="#app" aria-current="page" hidden><span data-icon="film"></span><span>创作 MV</span></a>
+      <a id="nav-mv-library" aria-label="我的 MV" title="我的 MV" href="./director.html"><span data-icon="library"></span><span>我的 MV</span></a>
+    </nav>
+  </aside>
+  <div class="mv-workspace" id="workspace-scroll">
+    <header class="workspace-header"><div class="breadcrumb"><span>工作台</span><span class="breadcrumb-arrow" data-icon="arrow-right"></span><strong id="view-title">创作 MV</strong></div><nav aria-label="页面操作"><button id="advanced" hidden><span data-icon="canvas"></span>精细编辑</button><a id="music-back" class="icon-button" aria-label="返回音乐工作台" title="返回音乐工作台"><span data-icon="back"></span></a></nav></header>
+    <main id="app"><div class="page-loading" role="status"><span class="loading-dot"></span>正在打开歌曲…</div></main>
+  </div>
+  <footer class="song-bar" id="song-bar" aria-label="歌曲播放器" hidden>
+    <div class="song-now"><div class="vinyl" aria-hidden="true"><div class="vinyl-label"><img src="./assets/brand/osmanthus-logo.png" alt=""></div></div><div class="song-copy"><strong id="song-title"></strong><span id="song-info"></span><span id="playing-lyric" aria-live="off"></span></div></div>
+    <div class="song-center"><div class="playback-controls"><button id="music-restart" class="icon-button" aria-label="回到歌曲开头" title="回到歌曲开头"><span data-icon="restart"></span></button><button id="music-toggle" class="icon-button music-toggle" aria-label="播放歌曲" title="播放歌曲"><span data-icon="play"></span></button><span id="music-loading" class="loading-dot" role="status" aria-label="歌曲加载中" hidden></span></div><div class="song-progress"><output id="music-current">0:00</output><input id="music-seek" type="range" min="0" max="0" step="0.1" value="0" aria-label="歌曲播放进度" disabled><output id="music-duration">0:00</output></div></div>
+    <div class="song-volume"><button id="music-mute" class="icon-button" aria-label="静音歌曲" aria-pressed="false" title="静音歌曲"><span data-icon="volume"></span></button><input id="music-volume" type="range" min="0" max="1" step="0.01" value="1" aria-label="歌曲音量"></div>
+    <audio id="music" preload="metadata" hidden></audio>
+  </footer>
+  <div id="notice" role="status" hidden></div>
+  <dialog id="confirm"><form method="dialog"><h2 id="confirm-title"></h2><div id="confirm-body"></div><footer><button value="cancel">返回修改</button><button value="ok" class="primary">确认继续</button></footer></form></dialog>
+  <dialog id="edit"><form id="edit-form"><h2 id="edit-title">修改方案</h2><p id="edit-impact"></p><label>描述你想怎么改<textarea id="edit-instruction" rows="4" maxlength="2000" placeholder="例如：保留角色，改成傍晚海边，镜头缓慢拉远" required></textarea></label><footer><button type="button" id="edit-cancel">取消</button><button class="primary" type="submit">应用修改</button></footer></form></dialog>
+  <dialog id="share-dialog"><h2>分享 MV</h2><p>把这支 MV 发给朋友。对方需要能访问当前网站；本机地址仅在本机有效。</p><label>成片链接<input id="share-url" readonly></label><footer><button id="share-close">关闭</button><button id="share-system">系统分享</button><button id="share-copy" class="primary">复制链接</button></footer></dialog>
+  <script type="module" src="./mv-director.js"></script>
+</body></html>

@@ -1,4 +1,13 @@
 const paths={
+home:'<path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1Z"/>',
+library:'<rect x="4" y="7" width="16" height="14" rx="2"/><path d="M7 3h10M5 5h14m-4 7-5 3 5 3Z"/>',
+'panel-close':'<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18m7-13-4 4 4 4"/>',
+'panel-open':'<rect x="3" y="3" width="18" height="18" rx="3"/><path d="M9 3v18m4-13 4 4-4 4"/>',
+'arrow-right':'<path d="M4 12h16m-6-6 6 6-6 6"/>',
+restart:'<path d="M4 5v14m16-14L8 12l12 7Z"/>',
+volume:'<path d="m11 4-5 4H3v8h3l5 4Zm4 4a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
+'volume-off':'<path d="m11 4-5 4H3v8h3l5 4Zm5 5 5 6m0-6-5 6"/>',
+edit:'<path d="m16 3 5 5-12 12-6 1 1-6Zm-2 2 5 5"/>',
 back:'<path d="m14 5-7 7 7 7M7 12h14"/>',plus:'<path d="M12 5v14M5 12h14"/>',minus:'<path d="M5 12h14"/>',
 'arrow-up':'<path d="M12 20V4m-7 7 7-7 7 7"/>',chevron:'<path d="m6 9 6 6 6-6"/>',
 canvas:'<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M8 8h8v8H8z"/>',video:'<rect x="3" y="5" width="14" height="14" rx="3"/><path d="m17 10 4-3v10l-4-3"/>',
