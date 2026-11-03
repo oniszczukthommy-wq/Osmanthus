@@ -90,7 +90,7 @@ def synthesize(notes,tempo,output,name,string_channels=False):
     for tick,on,pitch,velocity,channel in sorted(events,key=lambda e:(e[0],e[1])):
         track.append(mido.Message('note_on' if on else 'note_off',channel=channel,note=pitch,velocity=velocity if on else 0,time=tick-previous));previous=tick
     midi.save(output/(name+'.mid'))
-    result=subprocess.run([str(ROOT.parent/'audio-runtime/env/bin/fluidsynth'),'-ni','-g','0.6','-o','synth.reverb.active=0','-o','synth.chorus.active=0',
+    result=subprocess.run([str(media_tool(ROOT.parent/'audio-runtime/env/bin/fluidsynth')),'-ni','-g','0.6','-o','synth.reverb.active=0','-o','synth.chorus.active=0',
         '-F',str(output/(name+'.wav')),'-r','44100',str(ROOT.parent/'instrument-generaluser/GeneralUser-GS.sf2'),str(output/(name+'.mid'))],capture_output=True,timeout=60)
     if result.returncode:raise ValueError('吉他音源渲染失败')
     return sf.read(output/(name+'.wav'),dtype='float32',always_2d=True)

@@ -39,6 +39,21 @@ def media_binary(name):
     return legacy if legacy.is_file() else Path(name + ('.exe' if os.name == 'nt' else ''))
 
 
+def media_tool(path):
+    """Resolve a bundled tool path, accepting the Windows .exe suffix.
+
+    Several resources are written as Unix-style paths (…/bin/fluidsynth). On
+    Windows the executable is fluidsynth.exe, so a literal Path would fail an
+    is_file() check even though the tool runs fine.
+    """
+    candidate = Path(path)
+    if os.name == 'nt' and not candidate.is_file():
+        executable = candidate.with_name(candidate.name + '.exe')
+        if executable.is_file():
+            return executable
+    return candidate
+
+
 def venv_python(directory, env_name=None, fallback=False):
     if env_name and os.environ.get(env_name):
         value = os.environ[env_name]

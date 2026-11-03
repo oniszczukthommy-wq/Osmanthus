@@ -38,7 +38,23 @@ async function refreshCost(force=false){
   finally{if(costLoadingKey===key)costLoadingKey='';renderCost();}
 }
 function heading(){return `<nav class="steps" aria-label="MV 创作步骤">${[['range','音乐与想法'],['plan','画面方案'],['result','预览与导出']].map(([key,label],index)=>`<button data-step="${key}" aria-current="${step===key?'step':'false'}" ${busy()||key!=='range'&&!session.plan?'disabled':''}><span class="step-number">${index+1}</span><span class="step-label">${label}</span></button>`).join('')}</nav>`;}
-function renderProgress(){const host=$('progress');if(!host)return;host.hidden=!currentJob||currentJob.status==='ready';host.innerHTML=currentJob?`<p class="${['failed','uncertain'].includes(currentJob.status)?'error':''}">${esc(currentJob.message)}</p>${!done.has(currentJob.status)?`<progress max="100" value="${currentJob.progress||0}"></progress><small>可以离开页面，回来后继续查看。</small>`:currentJob.status==='failed'&&['preview','render'].includes(currentJob.kind)?'<button data-action="recover">恢复已有任务</button>':''}`:'';}
+const SHOT_STATE={queued:'等待中',submitting:'提交中',pending:'等待模型',running:'生成中',processing:'生成中',downloading:'下载中',ready:'已完成',failed:'失败',uncertain:'待核对',download_failed:'恢复下载'};
+function elapsedLabel(from){const started=Date.parse(from||'');if(!Number.isFinite(started))return '';const seconds=Math.max(0,Math.round((Date.now()-started)/1000));return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;}
+function renderProgress(){
+  const host=$('progress');if(!host)return;
+  if(!currentJob){host.hidden=true;host.innerHTML='';return;}
+  host.hidden=currentJob.status==='ready';
+  const failed=['failed','uncertain'].includes(currentJob.status);
+  const elapsed=elapsedLabel(currentJob.createdAt);
+  const shots=Array.isArray(currentJob.shots)&&currentJob.shots.length
+    ?`<div class="shot-states">${currentJob.shots.map((shot,index)=>`<span class="${esc(shot.status||'queued')}">镜头 ${index+1} · ${esc(SHOT_STATE[shot.status]||shot.status||'等待中')}</span>`).join('')}</div>`
+    :'';
+  const bar=done.has(currentJob.status)?'':`<progress max="100" value="${currentJob.progress||0}"></progress>`;
+  const wait=elapsed?`<small>${currentJob.status==='running'?'已等待':'耗时'} ${elapsed}。可以离开页面，回来后继续查看。</small>`:'';
+  const recover=currentJob.status==='failed'&&['preview','render'].includes(currentJob.kind)?'<button data-action="recover">恢复已有任务</button>':'';
+  const hint=currentJob.status==='running'?'视频生成由服务商排队处理，通常需要数分钟到二十分钟不等。':'';
+  host.innerHTML=`<p class="${failed?'error':''}">${esc(currentJob.message)}</p>${shots}${bar}${wait}${hint?`<small>${esc(hint)}</small>`:''}${recover}`;
+}
 function render(){
   if(!session)return;const disabled=busy()?'disabled':'';
   document.body.classList.add('has-song');$('nav-current-mv').hidden=false;$('nav-current-mv').href=localUrl('/director.html')+'?session='+session.id+'#app';$('nav-current-mv').setAttribute('aria-current','page');$('nav-mv-library').removeAttribute('aria-current');$('view-title').textContent='创作 MV';

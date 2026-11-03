@@ -36,8 +36,11 @@ const json=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value,null
 const key=process.env.MV_DISABLE_MODELS==='1'?'':process.env.DEEPSEEK_API_KEY||env.DEEPSEEK_API_KEY||'',model=process.env.DEEPSEEK_MODEL||env.DEEPSEEK_MODEL||'deepseek-flash';
 const aliKey=process.env.MV_DISABLE_MODELS==='1'?'':process.env.DASHSCOPE_API_KEY||env.DASHSCOPE_API_KEY||'';
 const textUsage=createTextUsage({data:DATA}),textFetch=textUsage.wrapFetch(globalThis.fetch);
+// Provider watermarks ship on by default. Set MV_MODEL_WATERMARK=0 only when your
+// jurisdiction and provider terms allow an unmarked AI-generated export.
+const modelWatermark=(process.env.MV_MODEL_WATERMARK??env.MV_MODEL_WATERMARK??'1')!=='0';
 const legacyPlanning=createLegacyPlanning({data:DATA,model,generate:enrich,check:textUsage.check});
-const aliVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:process.env.MV_VIDEO_MODEL||env.MV_VIDEO_MODEL||'wanx2.1-t2v-turbo',region:process.env.MV_VIDEO_REGION||env.MV_VIDEO_REGION||'cn-beijing',budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20),probe});
+const aliVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:process.env.MV_VIDEO_MODEL||env.MV_VIDEO_MODEL||'wanx2.1-t2v-turbo',region:process.env.MV_VIDEO_REGION||env.MV_VIDEO_REGION||'cn-beijing',budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20),watermark:modelWatermark,probe});
 const aiPlanner=createMVPlanner({data:DATA,key,model,fetchImpl:textFetch});
 const aiMV=createAIMVWorkflow({data:DATA,planner:aiPlanner,video:aliVideo,audioPath,probe,ffmpeg:ff});
 const tasks=new Map();
@@ -50,8 +53,8 @@ if(fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3')))waveform(path.join(
 function version(p,label,output=null){const id=uid(),v={id,createdAt:new Date().toISOString(),label,project:clone(p),output};json(path.join(DATA,'versions',id+'.json'),v);return v;}
 const activeProjectFile=path.join(DATA,'project.json'),UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const materials=createMaterialStore({data:DATA,probe,write:json});
-const imageModel=createAliImage({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4),maxBudgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4)});
-const imageVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:'wan2.6-i2v-flash',probe,budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20)});
+const imageModel=createAliImage({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4),maxBudgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4),watermark:modelWatermark});
+const imageVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:'wan2.6-i2v-flash',probe,budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20),watermark:modelWatermark});
 const speechModel=createAliSpeech({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:1});
 const canvasPrompts=createCanvasPrompts({data:DATA,key,aliKey,visionModel:process.env.DASHSCOPE_VISION_MODEL||env.DASHSCOPE_VISION_MODEL||'qwen3.5-flash',workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model,materials,fetchImpl:textFetch});
 const firstFrames=createCanvasFirstFrame({data:DATA,ffmpeg:ff,probe,materials});

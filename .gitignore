@@ -53,3 +53,10 @@
 **/speech-jobs/
 **/svc-jobs/
 **/vocal-jobs/
+
+# Installed external tools and per-run job state (never source).
+/music-workbench/validation/audio-runtime/env/
+/music-workbench/validation/track-edit-e2e-20261024/artwork/
+/music-workbench/validation/track-edit-e2e-20261024/mv-handoffs/
+/music-workbench/validation/track-edit-e2e-20261024/workflow/
+

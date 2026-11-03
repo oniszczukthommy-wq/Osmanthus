@@ -195,7 +195,10 @@ class Workflow:
                 job=json.loads(path.read_text());audio=path.parent/'complete.mp3'
                 if valid_id(job['id']) and audio.exists():result.append({'key':'stream:'+job['id'],'title':job['title'],'path':audio})
             except (ValueError,KeyError):continue
-        cases=json.loads((ROOT.parent/'provider-song-comparison-20261024/cases.json').read_text())['cases']
+        try:
+            cases=json.loads((ROOT.parent/'provider-song-comparison-20261024/cases.json').read_text())['cases']
+        except (OSError,ValueError,KeyError):
+            cases=[]
         for case in cases:
             audio=ROOT.parent/'provider-song-comparison-20261024/yinchao'/case['id']/'song.mp3'
             if audio.exists():result.append({'key':'case:'+case['id'],'title':case['title'],'path':audio})
