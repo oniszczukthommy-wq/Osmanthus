@@ -54,6 +54,40 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     if(old)return get(id);
     const s={id,project_id:project.id,title:project.title,source:project.source,source_sha256:fingerprint,lyrics:project.lyrics||[],manualLyrics:project.manualLyrics||'',project:clone(project),revision:0,plan:null,previews:{},outputs:[],activeJob:null,createdAt:new Date().toISOString()};saveSession(s);return get(id);
   }
+  // Manual lyric timing: when no alignment timeline exists (no TIFA on this
+  // machine) the user can still give one, so 按歌词选段 is not a dead button.
+  function setLyrics(id,payload){
+    const s=session(id);if(!s)throw fail('找不到这首歌的MV工程',404);
+    const project=s.project||{};
+    const duration=Number(s.source?.duration||project.source?.duration||0);
+    if(!(duration>0))throw fail('歌曲时长未知，无法校验歌词时间轴',409);
+    let lines;
+    if(Array.isArray(payload?.lines)&&payload.lines.length){
+      if(payload.lines.length>400)throw fail('歌词行数超过400行',400);
+      lines=payload.lines.map(l=>{
+        const start=Number(l?.start),end=Number(l?.end),text=String(l?.text??'').trim();
+        if(!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start||end>duration+.15)throw fail('歌词时间轴无效：请检查每一行的起止秒',400);
+        if(!text||text.length>600)throw fail('歌词文本为空或超过600字',400);
+        return{start:Math.round(start*1000)/1000,end:Math.round(end*1000)/1000,text};
+      });
+    }else{
+      const texts=String(payload?.text??'').split(/\r?\n/).map(t=>t.trim()).filter(Boolean);
+      if(!texts.length)throw fail('请至少输入一行歌词',400);
+      if(texts.length>400)throw fail('歌词行数超过400行',400);
+      if(texts.some(t=>t.length>600))throw fail('单行歌词不能超过600字',400);
+      const start=Number(payload?.start),span=Number(payload?.span);
+      if(!Number.isFinite(start)||!Number.isFinite(span)||start<0||start>=duration)throw fail('请填写有效的歌词起始秒',400);
+      if(!(span>0)||start+span>duration+.15)throw fail('歌词时长超出歌曲范围',400);
+      const step=span/texts.length;
+      lines=texts.map((text,i)=>({start:Math.round((start+i*step)*1000)/1000,end:Math.round((start+(i+1)*step)*1000)/1000,text}));
+    }
+    lines.sort((a,b)=>a.start-b.start);
+    s.lyrics=lines;
+    s.manualLyrics=lines.map(l=>l.text).join('\n');
+    s.lyricsSource=Array.isArray(payload?.lines)&&payload.lines.length?'manual-timed':'manual-even';
+    saveSession(s);
+    return get(id);
+  }
   const items=s=>[...s.plan.characters,...s.plan.scenes,...s.plan.shots];
   function imageSpec(s,item){
     const recipe=previewRecipe(s.plan,item,s.ratio,s.references||[]);
@@ -214,6 +248,6 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   function asset(id){const j=job(id);if(j?.status!=='ready'||j.kind!=='render'||!j.output)return null;const f=path.join(root,'media',id,'mv.mp4');if(!fs.existsSync(f)||hash(fs.readFileSync(f))!==j.output.sha256)return null;return{file:f,kind:'video',...j.output};}
   function recover(id){const j=job(id);if(!j||!['preview','render'].includes(j.kind)||j.status!=='failed')throw fail('这项任务不能自动重试，请先核对原任务',409);const s=session(j.session_id);if(s.activeJob||s.revision!==j.revision)throw fail('方案已改变或有其他任务，请查看当前方案',409);j.status='queued';j.message='正在恢复已有素材与任务';saveJob(j);s.activeJob=id;saveSession(s);schedule(id,1);return j;}
   for(const j of all('jobs'))if(!terminal.has(j.status))schedule(j.id,100);
-  return{open,get,start,recover,quote:(id,kind)=>{const s=session(id);if(!s||!['preview','render','complete'].includes(kind))throw fail('MV方案或操作无效');return quote(s,kind);},job:id=>job(id),list:()=>all('sessions').map(publicSession).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)),asset,
+  return{open,get,start,recover,setLyrics,quote:(id,kind)=>{const s=session(id);if(!s||!['preview','render','complete'].includes(kind))throw fail('MV方案或操作无效');return quote(s,kind);},job:id=>job(id),list:()=>all('sessions').map(publicSession).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)),asset,
     refresh:async id=>{await advance(id);return job(id);},close(){closed=true;for(const timer of timers.values())clearTimeout(timer);timers.clear();}};
 }

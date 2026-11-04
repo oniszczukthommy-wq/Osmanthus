@@ -99,6 +99,9 @@ input[type=file]::file-selector-button{border:0;border-radius:6px;background:#30
 .progress p{margin:0 0 10px;color:#ddd}
 .progress progress{width:100%;height:5px;accent-color:var(--os-accent)}
 .progress small{display:block;color:var(--os-muted);margin-top:10px}
+.manual-lyrics{display:grid;gap:12px;margin-top:14px}
+.manual-lyrics textarea{width:100%;box-sizing:border-box;resize:vertical;background:#242229;color:inherit;border:1px solid #4a4454;border-radius:10px;padding:11px;font:inherit;line-height:1.7}
+.manual-lyrics textarea:focus{outline:2px solid var(--os-accent);outline-offset:1px}
 .progress .shot-states{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
 .progress .shot-states span{padding:3px 9px;border:1px solid #3a3a40;border-radius:999px;font-size:11px;color:var(--os-muted)}
 .progress .shot-states span.running,.progress .shot-states span.processing,.progress .shot-states span.downloading{border-color:var(--os-accent);color:var(--os-accent)}

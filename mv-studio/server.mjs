@@ -240,6 +240,11 @@ export function createServer({media=mediaProcessing}={}){const {probe,waveform}=
   if(method==='GET'&&directorJob){const job=mvDirector.job(directorJob[1]);return job?send(200,{job}):send(404,{error:'找不到MV任务'});}
   const directorSession=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})(\/quote)?$/);
   if(method==='GET'&&directorSession){const session=mvDirector.get(directorSession[1]);if(!session)return send(404,{error:'找不到MV方案'});return send(200,directorSession[2]?{estimate:mvDirector.quote(session.id,u.searchParams.get('kind'))}:{session});}
+  const directorLyrics=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/lyrics$/);
+  if(method==='POST'&&directorLyrics){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    return send(200,{session:mvDirector.setLyrics(directorLyrics[1],payload)});
+  }
   if(method==='POST'&&route==='/api/ai-mv/plan'){
    const {project,request_id,instruction,duration=10,start=project?.start,ratio=project?.studio?.ratio||'16:9'}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
    validateServerProject(project);if(project.source.id==='sample')return send(400,{error:'请先选择自己的歌曲或上传音频'});

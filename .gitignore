@@ -60,3 +60,7 @@
 /music-workbench/validation/track-edit-e2e-20261024/mv-handoffs/
 /music-workbench/validation/track-edit-e2e-20261024/workflow/
 
+# Local reference-film reverse-engineering output (15MB of extracted stills).
+/mv-studio/public/reverse-analysis/
+
+

@@ -62,9 +62,9 @@ function render(){
   let content='';
   if(step==='range'){
     const lines=timedLyrics(project()),r=chosen();
-    content=`<div class="page-intro"><h1>让这首歌，拥有画面</h1><p>选好音乐，写下画面想法。角色、场景与镜头会一起出现在方案里。</p></div><div class="split"><section class="panel"><h2>想制作哪一段？</h2><div class="choices">${[['full','整首歌曲'],['lyrics','选歌词'],['range','选时间']].map(([mode,label])=>`<button data-mode="${mode}" aria-pressed="${selection.mode===mode}" ${disabled||mode==='lyrics'&&!lines.length?'disabled':''}>${label}</button>`).join('')}</div>
-    ${selection.mode==='lyrics'?`<div class="lyrics">${lines.map((line,i)=>`<label class="lyric ${i>=selection.from&&i<=selection.to?'selected':''}" data-line="${i}"><input type="checkbox" data-lyric="${i}" ${i>=selection.from&&i<=selection.to?'checked':''} ${disabled}><span>${esc(line.text)}</span><small>${time(line.start)}</small></label>`).join('')}</div>`:selection.mode==='full'?'<p>包含歌曲的前奏、间奏和尾奏。</p>':''}
-    ${!lines.length?'<p class="hint">这首歌还没有可用的歌词时间轴，可以按时间选段，或制作整首。</p>':''}
+    content=`<div class="page-intro"><h1>让这首歌，拥有画面</h1><p>选好音乐，写下画面想法。角色、场景与镜头会一起出现在方案里。</p></div><div class="split"><section class="panel"><h2>想制作哪一段？</h2><div class="choices">${[['full','整首歌曲'],['lyrics','选歌词'],['range','选时间']].map(([mode,label])=>`<button data-mode="${mode}" aria-pressed="${selection.mode===mode}" ${disabled}>${label}</button>`).join('')}</div>
+    ${selection.mode==='lyrics'?(lines.length?`<div class="lyrics">${lines.map((line,i)=>`<label class="lyric ${i>=selection.from&&i<=selection.to?'selected':''}" data-line="${i}"><input type="checkbox" data-lyric="${i}" ${i>=selection.from&&i<=selection.to?'checked':''} ${disabled}><span>${esc(line.text)}</span><small>${time(line.start)}</small></label>`).join('')}</div>`:`<div class="manual-lyrics"><label>歌词（每行一句）<textarea name="manual-lyrics" rows="6" maxlength="12000" placeholder="把歌词按行粘贴进来，例如：&#10;雨夜慢慢走回家&#10;风把委屈都吹散" ${disabled}></textarea></label><div class="range-fields"><label>起始（秒）<input name="manual-start" type="number" step="0.1" min="0" value="0" ${disabled}></label><label>覆盖总时长（秒）<input name="manual-span" type="number" step="0.1" min="1" value="${Math.min(30,session.source.duration).toFixed(1)}" ${disabled}></label></div><div class="actions"><button data-action="apply-lyrics" ${disabled}>应用歌词时间轴</button></div><p class="hint">这台机器没有歌词对齐引擎，所以先按你给的起止范围把每行歌词平均铺开，之后就能按歌词选段。</p></div>`):selection.mode==='full'?'<p>包含歌曲的前奏、间奏和尾奏。</p>':''}
+    ${!lines.length&&selection.mode!=='lyrics'?'<p class="hint">这首歌还没有可用的歌词时间轴，可以手动填入，或按时间选段。</p>':''}
     ${selection.mode!=='full'?`<div class="range-fields"><label>开始（秒）<input name="start" type="number" step="0.1" min="0" value="${r?.start??selection.start??0}" ${disabled}></label><label>结束（秒）<input name="end" type="number" step="0.1" max="${session.source.duration}" value="${r?.end??selection.end??Math.min(15,session.source.duration)}" ${disabled}></label></div>`:''}
     <div class="actions"><button data-action="listen-range" ${!r?'disabled':''}>${icon('play')}试听选段</button><span id="range-summary">${r?`${time(r.start)}—${time(r.end)} · ${r.duration.toFixed(1)} 秒`:'请选择连续歌词或有效时间范围'}</span></div></section>
     <section class="panel"><h2>画面想法</h2><label>你想看到怎样的 MV？<textarea name="idea" maxlength="3000" rows="5" placeholder="例如：雨夜重逢的故事，电影感，温暖的结尾。也可以留空，让 AI 自由发挥。" ${disabled}>${esc(idea)}</textarea></label><div class="range-fields"><label>画面比例<select name="ratio" ${disabled}>${DIRECTOR_RATIOS.map(r=>`<option ${r===ratio?'selected':''}>${r}</option>`).join('')}</select></label><label>参考图片（可选，最多 3 张）<input id="reference-upload" type="file" accept="image/png,image/jpeg,image/webp" multiple ${disabled}></label></div><div class="references">${references.map((r,i)=>`<div><img src="${esc(localUrl(r.url))}" alt="参考图 ${i+1}"><button data-remove-reference="${i}" ${disabled}>移除</button></div>`).join('')}</div><div class="actions"><button class="primary" data-action="prepare" ${disabled||!r?'disabled':''}>设计 MV 方案</button></div><p class="hint">先设计方案，再确认图片与视频的制作消耗。</p></section></div>`;
@@ -120,6 +120,17 @@ $('app').addEventListener('click',async event=>{
     if(action==='refresh-cost')return await refreshCost(true);
     if(action==='recover'){currentJob=(await api('/api/mv-director/recover',{job_id:currentJob.id})).job;render();return await receive(currentJob);}
     if(action==='listen-range'){const r=range();return await listen(r.start,r.end);}
+    if(action==='apply-lyrics'){
+      const host=$('app');
+      const text=host.querySelector('[name=manual-lyrics]')?.value||'';
+      const start=Number(host.querySelector('[name=manual-start]')?.value||0);
+      const span=Number(host.querySelector('[name=manual-span]')?.value||0);
+      try{
+        const result=await api(`/api/mv-director/${session.id}/lyrics`,{text,start,span});
+        session=result.session;selection={mode:'lyrics',from:0,to:0};render();
+      }catch(e){notice(e.message);}
+      return;
+    }
     if(action==='prepare')return await submit('prepare',{selection,idea,ratio,references:references.map(r=>r.id)});
     if(action==='previews'||action==='generate'){
       const complete=(await api(`/api/mv-director/${session.id}/quote?kind=complete`)).estimate;
