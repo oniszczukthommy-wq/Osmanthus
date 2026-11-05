@@ -130,6 +130,20 @@ test('enter reuses an existing music-free canvas and creates blank only for a fr
  await fresh.run("action('empty-canvas')");assert.equal(fresh.state.activations[0].blank,true);assert.equal(fresh.state.project.id,'new-canvas');
 });
 
+test('direct canvas entry creates a real empty project for the initial sample draft',async()=>{
+ const fresh=canvasEntryFixture({id:'draft',source:{id:'sample'},musicHandoff:null,studio:{ratio:'16:9'}});
+ await fresh.run('openCanvas(false)');
+ assert.equal(fresh.state.activations[0].blank,true);
+ assert.equal(fresh.state.project.id,'new-canvas');
+ assert.equal(fresh.state.project.studio.freeCanvas,true);
+
+ // A previously saved project must not be silently replaced on direct entry.
+ const saved=canvasEntryFixture({id:'saved-legacy',source:{id:'sample'},musicHandoff:null,studio:{ratio:'9:16'}});
+ await saved.run('openCanvas(false)');
+ assert.equal(saved.state.activations[0].blank,false);
+ assert.equal(saved.state.project.id,'saved-legacy');
+});
+
 test('canvas activation keeps old controls inert and starts storyboard only after the new origin is ready',async()=>{
  const f=canvasEntryFixture();let finish;const waiting=new Promise(resolve=>finish=resolve);
  f.state.onActivate=async()=>{f.context.setView('canvas');await waiting;f.state.project={...f.state.project,id:'activated-origin'};};

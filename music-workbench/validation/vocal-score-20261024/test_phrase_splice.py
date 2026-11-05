@@ -1,10 +1,12 @@
 """Offline character-preservation contracts for local lyric-grid candidates."""
 import copy
 import unittest
+from unittest.mock import patch
 
 import textgrid
 
 from phrase_review import checked_splice_grid, grid_characters, splice_grid, validate_spliced_grid
+from refine_lyrics import checked_refinement_grid
 
 
 def make_grid(intervals, duration):
@@ -65,6 +67,23 @@ class PhraseSpliceTests(unittest.TestCase):
         self.assertEqual(rejection["expected_character_count"], rejection["candidate_character_count"])
         self.assertEqual(rejection["first_mismatch_index"], 1)
         self.assertEqual(snapshot(self.grid), self.before)
+
+    def test_refinement_rejects_changed_text_without_mutating_source(self):
+        local = make_grid([(0, .4, "乙"), (.4, 1, "丙")], 1)
+        amended, rejection = checked_refinement_grid(self.grid, local, 1.5, 1.5, 2.5, self.lyrics)
+        self.assertIsNone(amended)
+        self.assertEqual(rejection['reason'], 'splice_changed_full_lyric_character_sequence')
+        self.assertEqual(snapshot(self.grid), self.before)
+
+    def test_refinement_does_not_hide_invalid_original_grid(self):
+        local = make_grid([(0, 1, "乙"), (1, 2, "丙")], 2)
+        with self.assertRaisesRegex(ValueError, '原始歌词时间轴与歌词不一致'):
+            checked_refinement_grid(self.grid, local, 1, 1, 3, '不同歌词')
+
+    def test_refinement_does_not_hide_unexpected_errors(self):
+        with patch('refine_lyrics.checked_splice_grid', side_effect=RuntimeError('unexpected')):
+            with self.assertRaisesRegex(RuntimeError, 'unexpected'):
+                checked_refinement_grid(self.grid, self.grid, 0, 0, 1, self.lyrics)
 
 
 if __name__ == "__main__":

@@ -54,19 +54,33 @@
 
 ## 仍需自行获取
 
-### 4. TIFA-1.0（精确歌词对齐）— 公开仓库未包含
+### 4. TIFA-1.0（歌词与演唱对齐）— 单独安装
 
-`run_tifa.py` 期望以下结构，但源码树与权重都不在本仓库：
+源码来自 [openvpi/TIFA](https://github.com/openvpi/TIFA)，本机验证的源码提交为
+`7b210ca36ff5a2b79187fb1727af58fc977cc301`，权重来自官方
+[v1.0.0 预训练模型发布页](https://github.com/openvpi/TIFA/releases/tag/v1.0.0)。
+`TIFA-1.0.zip` 的 SHA256 为
+`36595b2746f0d1183346fd448c7b99df9d7c51fd403bc45025438c3ebf439396`。
+源码为 MIT 许可，**预训练权重为 CC BY-NC-SA 4.0（非商业使用）**；
+商用前须另行取得适用授权或更换模型。权重、源码副本和虚拟环境均为本机可选资产，
+不提交进 Git。
+
+`run_tifa.py` 期望以下结构：
 
 ```
 music-workbench/validation/vocal-score-20261024/
 ├── TIFA/                          # 官方源码树（inference.api / lib / g2pflow）
 └── models/TIFA-1.0/
     ├── model.pt                   # 约 151MB
+    ├── config.yaml
+    ├── vocabulary.json
     └── dictionaries/ds-zh-pinyin-lite.txt
 ```
 
-本次检索未定位到官方发布页。若要复现，可改用公共强制对齐器（见下节替代方案）。
+运行时使用同目录下的 `.venv`；本机安装的环境通过 `osmanthus-deps.pth`
+复用项目主 `.venv` 中的 PyTorch 等包，其余对齐依赖安装在专用环境中。
+Windows 下该专用环境还需要 `pywin32`，供 `portalocker` 实现跨进程锁。
+歌词时间由模型根据实际音频推断，仍需逐句试听核对；对齐成功不等于自动通过精度验收。
 
 ### 5. 换声引擎 — 两者都需自行准备
 
@@ -78,10 +92,23 @@ music-workbench/validation/vocal-score-20261024/
 落盘位置分别为 `validation/seed-vc-20261025/` 与 `validation/yingmusic-svc-20261025/`。
 两者在 CPU 上都很慢（8 秒片段约 225–330 秒），且作者记录的主观听感仍有电音。
 
-### 6. 乐谱 PDF 导出（可选）
+### 6. 乐谱 PDF 排版与预览
 
-生成 MusicXML 之外的 PDF/PNG 预览需要 MuseScore 与 Poppler。缺少它们不影响
-`score.json` 与五线谱/简谱数据本身。
+完整出谱需要 MuseScore、Poppler `pdftoppm`、ReportLab、FluidSynth 和上文的
+GeneralUser GS 音源；任一必需工具缺失时，完整出谱任务不能标记为成功。
+本机使用 [MuseScore Studio 4.7.6 官方便携版](https://musescore.org/en/download)，
+SHA256 为 `c52c9da4015d72b0f9a12fd37ea323e03bdf524d654f6c93f32eebd9dbc35ce6`，
+解包在 `music-workbench/.local/score/MuseScorePortable/`，不提交到 Git。
+MuseScore 使用 GPL 许可，分发时须遵守其许可；随附软件和字体使用各自许可。
+
+在其他机器上可安装 MuseScore 4 并将可执行文件加入 PATH，或用
+`MUSESCORE_BIN` 指定其完整路径；把 Poppler 的 `pdftoppm` 加入 PATH。
+简谱使用系统中文字体，Windows 优先 `C:\Windows\Fonts\simhei.ttf`，
+也可用 `MUSIC_SCORE_FONT` 指定可嵌入的 TrueType 字体。
+在 `vocal-score-20261024/.venv` 中安装 `reportlab` 与 `pypdf`；
+前者生成简谱 PDF，后者负责部分异常退出后的文件完整性检查。
+本机用合成四音符中文 MusicXML 验证了 PDF、PNG 和音频导出，
+这不是对任何真实歌曲音高或乐谱准确性的验收。
 
 ### 7. Demucs 权重（自动下载）
 

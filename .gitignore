@@ -5,6 +5,7 @@
 !**/.env.example
 **/node_modules/
 **/__pycache__/
+**/.matplotlib/
 **/.DS_Store
 *.log
 *.zip
@@ -34,6 +35,7 @@
 **/models/
 **/checkpoints/
 **/weights/
+/music-workbench/validation/vocal-score-20261024/TIFA/
 *.safetensors
 *.ckpt
 *.sf2

@@ -7,6 +7,7 @@ import textgrid
 ROOT=Path(__file__).resolve().parent
 sys.path.insert(0,str(ROOT.parent/'track-edit-e2e-20261024'))
 from vocal_sources import lead_vocal_source
+from runtime_support import media_tool
 from note_listening import confirmed_pitches
 from rhythm_notation import selected_rhythm,notation_origin,quantize_span,units as duration_units,beams as duration_beams,dotted,visual_slots,unit_positions
 
@@ -213,12 +214,37 @@ def numbered_svg(score,output):
  body.append('</svg>');(output/'numbered-score.svg').write_text(''.join(body));return bars
 
 
+
+def score_font_path():
+ candidates=[os.environ.get('MUSIC_SCORE_FONT'),str(Path(os.environ.get('WINDIR',r'C:\Windows'))/'Fonts/simhei.ttf') if os.name=='nt' else None,
+  '/System/Library/Fonts/STHeiti Light.ttc','/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc']
+ for value in candidates:
+  if value and Path(value).is_file():return Path(value)
+ raise FileNotFoundError('未找到中文谱面字体，请设置 MUSIC_SCORE_FONT 指向可用字体。')
+
+def musescore_path():
+ candidates=[os.environ.get('MUSESCORE_BIN'),shutil.which('MuseScore4.exe'),shutil.which('musescore'),shutil.which('mscore'),
+  str(ROOT.parents[1]/'.local/score/MuseScorePortable/App/MuseScore/bin/MuseScore4.exe'),
+  str(Path(os.environ.get('PROGRAMFILES',r'C:\Program Files'))/'MuseScore 4/bin/MuseScore4.exe'),
+  str(ROOT.parent/'score/MuseScore 4.app/Contents/MacOS/mscore')]
+ for value in candidates:
+  if value and Path(value).is_file():return Path(value)
+ raise FileNotFoundError('未找到 MuseScore，请安装或设置 MUSESCORE_BIN。')
+
+def pdf_renderer_path():
+ candidate=shutil.which('pdftoppm')
+ if candidate:return candidate
+ legacy=Path('/Users/zyx/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override/pdftoppm')
+ if legacy.is_file():return str(legacy)
+ raise FileNotFoundError('未找到 pdftoppm，无法生成五线谱预览。')
+
+
 def numbered_pdf(score,bars,output):
  from reportlab.pdfgen import canvas
  from reportlab.pdfbase import pdfmetrics
  from reportlab.pdfbase.ttfonts import TTFont
  from reportlab.lib.pagesizes import A4
- pdfmetrics.registerFont(TTFont('ScoreCJK','/System/Library/Fonts/STHeiti Light.ttc',subfontIndex=0));c=canvas.Canvas(str(output/'numbered-score.pdf'),pagesize=A4);width,height=A4;cols=1 if score.get('rhythm_review') else 2;barwidth=(width-80)/cols;rows_per_page=8;page=0
+ pdfmetrics.registerFont(TTFont('ScoreCJK',str(score_font_path()),subfontIndex=0));c=canvas.Canvas(str(output/'numbered-score.pdf'),pagesize=A4);width,height=A4;cols=1 if score.get('rhythm_review') else 2;barwidth=(width-80)/cols;rows_per_page=8;page=0
  c.setTitle(score['title']+' · 简谱候选（待校订）')
  for row in range(math.ceil(len(bars)/cols)):
   if row%rows_per_page==0:
@@ -273,14 +299,14 @@ def pdf_contains_lyrics(path,expected):
 
 def engrave(score,output,data_dir):
  score_musicxml(score,output);bars=numbered_svg(score,output);numbered_pdf(score,bars,output)
- workbench=Path(os.environ.get('MUSIC_WORKBENCH_ROOT',str(ROOT.parent/'track-edit-e2e-20261024'))).resolve();musescore=ROOT.parent/'score/MuseScore 4.app/Contents/MacOS/mscore'
+ musescore=musescore_path();style=ROOT.parent/'score/engraving-style.mss';style_args=['-S',str(style)] if style.is_file() else []
  # Separate CLI processes avoid a native shutdown crash seen with a mixed PDF/SVG batch.
  for extension in ('pdf',):
   logs=[]
   for attempt in range(2):
    target=output/('staff-score.'+extension)
    target.unlink(missing_ok=True)
-   process=subprocess.run([str(musescore),'-F','-S',str(ROOT.parent/'score/engraving-style.mss'),'-o',str(target),str(output/'vocal-score.musicxml')],capture_output=True,timeout=90)
+   process=subprocess.run([str(musescore),'-F',*style_args,'-o',str(target),str(output/'vocal-score.musicxml')],capture_output=True,timeout=90)
    logs.append(f'Attempt {attempt+1}, exit {process.returncode}\n'.encode()+process.stdout+process.stderr)
    if process.returncode==0:break
    if process.returncode>0:break
@@ -296,10 +322,10 @@ def engrave(score,output,data_dir):
    (output/'engrave-validation.json').write_text(json.dumps({'renderer_exit_code':process.returncode,'known_native_shutdown_failure':known_shutdown,'independent_complete_lyric_sequence_check':verified,'all_page_render_check_follows':True},indent=2))
    if not verified:raise ValueError('五线谱排版未成功，原音频工程不受影响')
  if not (output/'staff-score.pdf').exists():raise ValueError('五线谱导出文件缺失')
- poppler=shutil.which('pdftoppm') or '/Users/zyx/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override/pdftoppm'
+ poppler=pdf_renderer_path()
  result=subprocess.run([poppler,'-scale-to','1700','-png',str(output/'staff-score.pdf'),str(output/'staff-page')],capture_output=True,timeout=60)
  if result.returncode or not list(output.glob('staff-page-*.png')):raise ValueError('五线谱预览渲染失败')
- synth=ROOT.parent/'audio-runtime/env/bin/fluidsynth';process=subprocess.run([str(synth),'-ni','-g','.4','-o','synth.reverb.active=0','-o','synth.chorus.active=0','-F',str(output/'melody-synth.wav'),'-r','44100',str(ROOT.parent/'instrument-generaluser/GeneralUser-GS.sf2'),str(output/'vocal-melody.mid')],capture_output=True,timeout=60)
+ synth=media_tool(ROOT.parent/'audio-runtime/env/bin/fluidsynth');process=subprocess.run([str(synth),'-ni','-g','.4','-o','synth.reverb.active=0','-o','synth.chorus.active=0','-F',str(output/'melody-synth.wav'),'-r','44100',str(ROOT.parent/'instrument-generaluser/GeneralUser-GS.sf2'),str(output/'vocal-melody.mid')],capture_output=True,timeout=60)
  if process.returncode:raise ValueError('参考旋律渲染失败')
  y,sr=sf.read(output/'melody-synth.wav',dtype='float32',always_2d=True);length=round(score['duration_seconds']*sr);fit=np.zeros((length,2),np.float32);shift=round(score.get('notation_origin_seconds',0)*sr);dst=max(0,shift);src=max(0,-shift);count=min(length-dst,len(y)-src)
  if count>0:fit[dst:dst+count]=y[src:src+count]

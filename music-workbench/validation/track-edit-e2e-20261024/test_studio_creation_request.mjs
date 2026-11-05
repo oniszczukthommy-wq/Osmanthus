@@ -171,7 +171,7 @@ await test('lyrics lock during confirmation and a late response never closes ano
 });
 await test('detail play controls reflect play and pause without changing queue cover buttons',async()=>{
  const attrs=new Map(),button={dataset:{songPlay:id},getAttribute:k=>attrs.get(k),setAttribute:(k,v)=>attrs.set(k,v)},context={all:selector=>selector==='[data-detail-play]'?[button]:[],songMetadata:()=>({title:'song'})};
- const fn=source.slice(source.indexOf('function applyPlaybackState('),source.indexOf('async function playSong('));vm.runInNewContext(fn,context);context.applyPlaybackState({id,playing:true});assert.equal(attrs.get('aria-pressed'),'true');assert.match(button.innerHTML,/暂停/);context.applyPlaybackState({id,playing:false});assert.equal(attrs.get('aria-pressed'),'false');assert.match(button.innerHTML,/播放/);
+ const fn=source.slice(source.indexOf('function applyPlaybackState('),source.indexOf('async function playSong('));vm.runInNewContext(fn,context);context.applyPlaybackState({id,playing:true});assert.equal(attrs.get('aria-pressed'),'true');assert.match(button.innerHTML,/data-lucide="pause"/);assert.equal(button.title,'暂停');context.applyPlaybackState({id,playing:false});assert.equal(attrs.get('aria-pressed'),'false');assert.match(button.innerHTML,/data-lucide="play"/);assert.equal(button.title,'播放');
 });
 await test('candidate like buttons reflect favorites immediately and after unliking',async()=>{
  const attrs=new Map(),button={dataset:{songFavorite:id},setAttribute:(k,v)=>attrs.set(k,v)},favorites=new Set([id]),context={all:()=>[button],favorites,songMetadata:()=>({title:'song'})};

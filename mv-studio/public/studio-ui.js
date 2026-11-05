@@ -25,7 +25,10 @@ export function mountStudio(bridge){
  async function openCanvas(blank=false,{applyComposer=false}={}){
   if(canvasOpening)return canvasOpening;
   if(bridge.busy()){bridge.toast('请先完成或停止当前制作');return false;}
-  const p=bridge.read(),createBlank=blank&&p.source.id==='sample'&&!p.studio?.canvas&&!p.studio?.freeCanvas;
+  // A direct #canvas visit can start from the unsaved sample draft without
+  // using the home page's explicit blank-canvas button. Create a real empty
+  // canvas first so subsequent edits never depend on the optional sample file.
+  const p=bridge.read(),createBlank=(blank||p.id==='draft')&&p.source.id==='sample'&&!p.studio?.canvas&&!p.studio?.freeCanvas;
   // Opening an existing canvas is a read operation. The home composer's
   // fallback type must not overwrite a saved free canvas in another tab.
   prompt=$('creative-prompt').value.trim();if(!createBlank&&applyComposer)bridge.configure({prompt,type},false);

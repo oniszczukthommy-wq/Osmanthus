@@ -3,7 +3,7 @@ from runtime_support import check_process, file_lock as fcntl, media_binary
 from pathlib import Path
 import argparse, hashlib, json, os, shutil, subprocess, threading, time, uuid
 from project import ROOT, save_json
-from scores import source_context, valid_id, BASE, PYTHON
+from scores import source_context, valid_id, BASE, PYTHON, step_timeout
 from vocal_sources import lead_vocal_source
 
 JOBS=ROOT/'lyric-jobs'
@@ -118,7 +118,7 @@ class Lyrics:
             state={**context,'lyrics':lyrics,'id':identifier,'audio_file':str(audio.resolve()),'stage':'queued','created_at':time.time()}
             folder=JOBS/identifier;folder.mkdir();save_json(folder/'state.json',state)
             with (folder/'worker.log').open('a') as log:
-                try:self.children.append(subprocess.Popen([str(PYTHON),str(ROOT/'lyrics.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,env={**os.environ,'OMP_NUM_THREADS':'1','OPENBLAS_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1'}))
+                try:self.children.append(subprocess.Popen([str(PYTHON),'-X','utf8',str(ROOT/'lyrics.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,env={**os.environ,'PYTHONUTF8':'1','PYTHONIOENCODING':'utf-8','OMP_NUM_THREADS':'1','OPENBLAS_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1'}))
                 except OSError:state.update(stage='error',error='无法启动歌词同步任务');save_json(folder/'state.json',state)
             return self.public(state)
 
@@ -131,8 +131,8 @@ class Lyrics:
             folder=JOBS/identifier;folder.mkdir();save_json(folder/'state.json',state)
             with (folder/'worker.log').open('a') as log:
                 try:
-                    child=subprocess.Popen([str(PYTHON),str(ROOT/'lyrics.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,
-                        env={**os.environ,'OMP_NUM_THREADS':'1','OPENBLAS_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1'})
+                    child=subprocess.Popen([str(PYTHON),'-X','utf8',str(ROOT/'lyrics.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,
+                        env={**os.environ,'PYTHONUTF8':'1','PYTHONIOENCODING':'utf-8','OMP_NUM_THREADS':'1','OPENBLAS_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1'})
                     self.children.append(child)
                 except OSError:
                     state.update(stage='error',error='无法启动本地歌词同步任务');save_json(folder/'state.json',state)
@@ -154,6 +154,7 @@ def work(identifier):
             if any(state[k]!=v for k,v in context.items()):raise ValueError('人声或歌词已改变，请重新对齐')
             audio=directory/lead_vocal_source(directory)['file']
             if hashlib.sha256(audio.read_bytes()).hexdigest()!=state['vocal_sha256']:raise ValueError('人声音频校验失败')
+            meta=json.loads((directory/'preparation.json').read_text())
             characters=None;reused=False
             score_files=([ROOT/'score-jobs'/state['timing_review_score_job_id']/'score.json'] if state.get('timing_review_score_job_id') else (ROOT/'score-jobs').glob('*/score.json'))
             for file in score_files:
@@ -170,10 +171,9 @@ def work(identifier):
                 target=inputs/'vocal.wav';shutil.copyfile(audio,target)
                 (inputs/'vocal.txt').write_text('\n'.join(lyric_lines(lyrics)))
                 with (folder/'alignment.log').open('a') as log:
-                    result=subprocess.run([str(PYTHON),str(BASE/'run_tifa.py'),str(target),'--output-dir',str(folder/'alignment'),'--threads','1'],stdout=log,stderr=log,timeout=600)
+                    result=subprocess.run([str(PYTHON),str(BASE/'run_tifa.py'),str(target),'--output-dir',str(folder/'alignment'),'--threads','1'],stdout=log,stderr=log,timeout=step_timeout('run_tifa.py',meta['duration_seconds']))
                 if result.returncode:raise ValueError('本地人声对齐未完成，歌词文本仍可查看，可重试同步')
                 characters=characters_from_grid(folder/'alignment/vocal.TextGrid')
-            meta=json.loads((directory/'preparation.json').read_text())
             lines=timed_lines(lyrics,characters,meta['duration_seconds'])
             final,_=context_for(directory)
             if final!=context:raise ValueError('人声或歌词已改变，未应用旧的时间轴')
@@ -204,7 +204,7 @@ def work_generated(state):
             (inputs/'vocal.txt').write_text('\n'.join(lyric_lines(state['lyrics'])))
             stage('aligning')
             with (folder/'alignment.log').open('a') as log:
-                result=subprocess.run([str(PYTHON),str(BASE/'run_tifa.py'),str(target),'--output-dir',str(folder/'alignment'),'--threads','1'],stdout=log,stderr=log,timeout=600)
+                result=subprocess.run([str(PYTHON),str(BASE/'run_tifa.py'),str(target),'--output-dir',str(folder/'alignment'),'--threads','1'],stdout=log,stderr=log,timeout=step_timeout('run_tifa.py',duration))
             if result.returncode:raise ValueError('歌曲歌词同步未完成，可重试；试听不受影响')
             lines=timed_lines(state['lyrics'],characters_from_grid(folder/'alignment/vocal.TextGrid'),duration)
             final,_=generated_context(job,audio)
