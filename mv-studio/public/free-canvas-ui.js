@@ -5,6 +5,7 @@ import {createCanvasDocument,validateCanvasDocument,addNode,updateNode,moveNodes
 import {mountReferencePanels,safePanelMediaUrl} from './reference-panels.js';
 import {normalizeCanvasDrawings} from './canvas-preferences.js';
 import {mountCanvasSettings,normalizeCanvasSettings,matchCanvasShortcut,resolveCanvasSettingsAction} from './canvas-settings-panel.js';
+import {startPromptSuggestions} from './prompt-suggestions.js';
 
 import {mountImageFrameTools} from './image-frame-tools.js';
 import {mountAIMVPanel} from './ai-mv-panel.js';
@@ -41,6 +42,7 @@ export function mountFreeCanvas(bridge,{onHome=()=>{},onDownloads=()=>{}}={}){
  ${btn('chat-toggle','打开画布助手','panel-open','id="fc-chat-open" aria-controls="fc-chat"')}<section id="fc-chat" class="fc-chat" aria-label="画布助手"><div class="fc-chat-heading"><strong><span class="fc-agent-mark">✳</span> 画布助手</strong><span></span>${btn('chat-sessions','查看全部会话','history')}${btn('chat-confirm-mode','二次确认','check')}${btn('chat-toggle','收起画布助手','panel-close','aria-controls="fc-chat"')}</div><div id="fc-chat-log" class="fc-chat-log" aria-live="polite"></div><div class="fc-compose"><div id="fc-chat-refs" class="fc-chat-refs"></div><textarea id="fc-request" rows="2" maxlength="2000" aria-label="画布创作指令" placeholder="描述分镜、镜头或画布调整，也可以拖入素材"></textarea><div class="fc-compose-tools">${btn('upload','上传素材','plus')}${btn('skills','技能','spark')}${btn('models','Agent','spark')}${btn('style','风格','palette')}${btn('assets','素材','users')}${btn('templates','模板','book')}<button id="fc-send" data-fc-action="send" class="fc-send" aria-label="发送">${icon('arrow-up')}</button></div></div></section>
  <input type="file" id="fc-file" accept="image/png,image/jpeg,image/webp,image/gif,video/mp4,video/quicktime,video/webm,audio/*,.flac,.opus" multiple hidden><input type="file" id="fc-import" accept="application/json,.json" hidden>`;
  const $=id=>document.getElementById(id),viewport=$('fc-viewport'),surface=$('fc-surface'),nodeHost=$('fc-nodes'),context=$('fc-context'),inspector=$('fc-inspector');
+ const chatSuggestions=startPromptSuggestions($('fc-request'),['为这首歌设计雨夜回家的 MV 分镜','让镜头缓慢推进，灯光更温暖','把画布里的素材整理成一个故事','给这首歌设计一张有电影感的封面']);
  let doc=createCanvasDocument(),meta={},projectId='',selection=new Set(),zoom=1,pan={x:100,y:130},drag=null,space=false,tool='select',menuPoint={x:100,y:100},clipboard=null,clipboardMeta={},undo=[],redo=[],signature='',chatSignature='',chatExpanded=false,chatBusy=false,linkFrom=null,selectionBefore=null,pendingRequest=null,ink=[],stroke=null;
  let lastFocus=null,uploading=false,disposed=false,viewVisible=false,uploadTarget=null,polishBusy=false,forceInspector=false,seenOutput=null,pendingAssistantResult=null,referenceTarget=null;
  const promptRequests=new Map();
@@ -279,6 +281,6 @@ export function mountFreeCanvas(bridge,{onHome=()=>{},onDownloads=()=>{}}={}){
  $('fc-request').addEventListener('keydown',e=>{if(e.isComposing||e.keyCode===229)return;if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){e.preventDefault();send()}});
  document.getElementById('modal').addEventListener('close',()=>{pendingAssistantResult=null;});window.addEventListener('resize',renderMinimap);
  sync(read());
- const api={sync,activate,visible,fit,panels,directorTools,imageFrameTools,aiMVPanel,mediaPanel,templateLibrary,editorPanel,previs,addMaterials,openProjects:projectsDialog,openEngine:options=>aiMVPanel.open(options),get doc(){return copy(doc)},get selection(){return[...selection]},get transform(){return{zoom,pan:copy(pan)}},destroy(){disposed=true;panels.destroy();directorTools.destroy();imageFrameTools.destroy();aiMVPanel.destroy();mediaPanel.destroy();templateLibrary.destroy();editorPanel.destroy();previs.destroy();overlay.remove()}};
+ const api={sync,activate,visible,fit,panels,directorTools,imageFrameTools,aiMVPanel,mediaPanel,templateLibrary,editorPanel,previs,addMaterials,openProjects:projectsDialog,openEngine:options=>aiMVPanel.open(options),get doc(){return copy(doc)},get selection(){return[...selection]},get transform(){return{zoom,pan:copy(pan)}},destroy(){disposed=true;chatSuggestions.destroy();panels.destroy();directorTools.destroy();imageFrameTools.destroy();aiMVPanel.destroy();mediaPanel.destroy();templateLibrary.destroy();editorPanel.destroy();previs.destroy();overlay.remove()}};
  window.OSMANTHUS_CANVAS=api;return api;
 }

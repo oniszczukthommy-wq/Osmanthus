@@ -6,6 +6,7 @@ import {esc,time} from './ui-parts.js';
 
 import {exactHomeMarkup} from './exact-home.js';
 import {mountFreeCanvas} from './free-canvas-ui.js';
+import {startPromptSuggestions} from './prompt-suggestions.js';
 
 const TYPES=[{id:'story',name:'剧情故事 MV'},{id:'visual',name:'视觉特效 MV'},{id:'performance',name:'动感表演 MV'},{id:'canvas',name:'自由画布'}];
 const SHOWCASE=[];
@@ -17,6 +18,7 @@ export function mountStudio(bridge){
  $('home-view').innerHTML=exactHomeMarkup(TYPES,SHOWCASE);
 
  $('creative-prompt').value=prompt;
+ startPromptSuggestions($('creative-prompt'),['为这首歌做一支雨夜回家的电影感 MV','让两个人在海边重逢，画面温暖浪漫','用城市夜景和慢镜头讲一个成长的故事']);
  $('studio-output-actions').append($('generate-button'));$('generate-button').classList.add('canvas-render-button');
  const free=mountFreeCanvas(bridge,{onHome:()=>setView('home'),onDownloads:()=>setView('downloads')});
  const mini=document.createElement('aside');mini.className='showcase-mini';mini.id='showcase-mini';mini.setAttribute('aria-label','样片迷你播放器');mini.hidden=true;mini.innerHTML=`<div class="mini-heading"><span id="mini-title"></span><button class="icon-button" data-studio-action="mini-expand" title="打开样片详情" aria-label="打开样片详情">${icon('fullscreen')}</button><button class="icon-button" data-studio-action="mini-close" title="关闭样片播放器" aria-label="关闭样片播放器">${icon('close')}</button></div><video id="mini-video" playsinline controls preload="metadata"></video><div class="mini-footer"><span>OiiOii 公开作品 · 原作者所有</span><button class="icon-button" data-studio-action="mini-prev" title="上一个样片" aria-label="上一个样片">${icon('back')}</button><button class="icon-button" data-studio-action="mini-next" title="下一个样片" aria-label="下一个样片">${icon('back')}</button></div>`;document.body.append(mini);

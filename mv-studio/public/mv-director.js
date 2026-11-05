@@ -2,11 +2,13 @@ import {localUrl,musicUrl} from './integration.js';
 import {selectMusicRange,timedLyrics,affectedShots,DIRECTOR_RATIOS} from './mv-director-domain.js';
 import {icon,hydrateIcons} from './icons.js';
 import {mountDirectorPlayer} from './mv-director-player.js';
+import {startPromptSuggestions} from './prompt-suggestions.js';
 const $=id=>document.getElementById(id),esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const time=n=>`${Math.floor(n/60)}:${(n%60).toFixed(1).padStart(4,'0')}`;
 const api=async(route,body)=>{const res=await fetch(localUrl(route),body===undefined?{}:{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const result=await res.json();if(!res.ok)throw Error(result.error||'操作未完成');return result;};
 let session=null,step='range',selection={mode:'full'},idea='',ratio='16:9',references=[],currentJob=null,poll=null,submitting=false,previewEnd=null,editTarget=null,subtitles=false;
 let cost=null,costKey='',costLoadingKey='',costError='';
+let ideaSuggestions=null;
 const audio=$('music');const done=new Set(['ready','failed','uncertain']);
 const player=mountDirectorPlayer(audio,{onError:message=>notice(message)});
 hydrateIcons();
@@ -80,7 +82,7 @@ function render(){
     const output=session.generated;
     content=`<div class="page-intro"><h1>${output?'你的 MV':'成片与历史版本'}</h1><p>${esc(session.title)}</p></div>${output?`<video class="output-video" id="result-video" controls playsinline preload="metadata" src="${esc(localUrl(output.url))}"></video><div class="actions result-actions"><a class="button-link primary" href="${esc(localUrl(output.url))}" download="${esc(session.title)}-MV.mp4">${icon('download')}下载 MP4</a><button data-action="share">${icon('link')}分享 MV</button><button data-step="plan" ${disabled}>${icon('edit')}修改画面</button><span>${time(output.duration)} · ${esc(session.ratio)}</span></div>`:'<p>确认方案后即可制作。已完成的旧版本会继续保留。</p>'}${session.outputs.length?`<div class="history"><h2>历史版本</h2>${[...session.outputs].reverse().map((x,i)=>`<a href="${esc(localUrl(x.url))}" download="${esc(session.title)}-MV-${i+1}.mp4">${icon('history')}<span>版本 ${session.outputs.length-i} · ${esc(new Date(x.createdAt).toLocaleString())}</span><small>MP4</small>${icon('download')}</a>`).join('')}</div>`:''}`;
   }
-  $('app').innerHTML=heading()+'<section id="progress" class="progress" aria-live="polite" hidden></section>'+content;renderProgress();renderCost();void refreshCost();
+  ideaSuggestions?.destroy();$('app').innerHTML=heading()+'<section id="progress" class="progress" aria-live="polite" hidden></section>'+content;ideaSuggestions=startPromptSuggestions($('app').querySelector('textarea[name=idea]'),['雨夜里一个人走回家，最后在窗边看到温暖的灯光','两个人在海边重逢，用电影感镜头记录他们的故事','跟随音乐穿过城市夜景，从孤独走向希望']);renderProgress();renderCost();void refreshCost();
 }
 async function ask(title,body){$('confirm-title').textContent=title;$('confirm-body').innerHTML=body;$('confirm').showModal();return await new Promise(resolve=>$('confirm').addEventListener('close',()=>resolve($('confirm').returnValue==='ok'),{once:true}));}
 async function receive(job){const previousProgress=currentJob?.progress;currentJob=job;if(!done.has(job.status)&&job.kind==='preview'&&previousProgress!==job.progress){session=(await api('/api/mv-director/'+session.id)).session;render();}renderProgress();if(done.has(job.status)){session=(await api('/api/mv-director/'+session.id)).session;if(job.status==='ready'){if(['prepare','revise','preview'].includes(job.kind))step='plan';if(job.kind==='render')step='result';}render();return;}clearTimeout(poll);poll=setTimeout(async()=>{try{await receive((await api('/api/mv-director/jobs/'+job.id)).job);}catch(e){notice(e.message);poll=setTimeout(()=>receive(job),4000);}},2000);}
