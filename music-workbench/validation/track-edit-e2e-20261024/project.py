@@ -394,7 +394,7 @@ class Project:
                 # A solo on another track would mask the restored part. Add
                 # this track to the solo set without changing any other track.
                 if any(x['solo'] for k,x in after.items() if k!=name and not x.get('removed')):t['solo']=True
-            action='静音' if mode=='mute' else ('恢复原音量' if mode=='restore' else f'设为 {db:g} dB')
+            action='静音' if mode=='mute' else ('恢复原音量' if mode=='restore' else f'音量 {round(gain*100)}%')
             label=f'{name} {start:g}–{end:g}秒 {action}'
         elif command.get('type')=='track_enabled':
             enabled=command.get('enabled')

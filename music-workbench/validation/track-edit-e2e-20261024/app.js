@@ -33,6 +33,7 @@ function context(){if(!audioContext){audioContext=new AudioContext({sampleRate:p
     outputGain=audioContext.createGain();outputGain.gain.value=playbackVolume;outputGain.connect(audioContext.destination);}return audioContext;}
 async function decode(url){const response=await fetch(url);if(!response.ok)throw Error('音轨载入失败');return context().decodeAudioData(await response.arrayBuffer());}
 function setBusy(value){busy=value;const unavailable=value||!hasProjectAudio();for(const id of ['play','stop','play-selection','apply-gain','mute-selection','restore-selection','send','export-wav','export-mp3'])$(id).disabled=unavailable;
+  const previewButton=$('segment-preview'),previewVolume=$('segment-volume');if(previewButton)previewButton.disabled=unavailable;if(previewVolume)previewVolume.disabled=unavailable;
   $('remove-track').disabled=unavailable||!project||project.tracks.length<=1;
   $('undo').disabled=unavailable||!project?.can_undo;$('redo').disabled=unavailable||!project?.can_redo;
   $('add-piano').disabled=unavailable||!project?.piano_available||project?.piano_added;
@@ -206,7 +207,7 @@ function drawWave(canvas,track){const box=canvas.getBoundingClientRect(),dpr=dev
   const displayed=visibleSegments(track.segments);canvas.dataset.displayedSegments=JSON.stringify(displayed);
   for(const edit of displayed){const a=edit.start_frame/project.sample_rate/project.duration*w,b=edit.end_frame/project.sample_rate/project.duration*w;
     ctx.fillStyle=edit.gain===0?'#0b101acb':'#a8eed51c';ctx.fillRect(a,0,b-a,h);
-    ctx.fillStyle='#e5f3ed';ctx.font='10px sans-serif';ctx.fillText(edit.gain===0?'静音':`${(20*Math.log10(edit.gain)).toFixed(0)} dB`,a+5,16);}
+    ctx.fillStyle='#e5f3ed';ctx.font='10px sans-serif';ctx.fillText(edit.gain===0?'静音':`${Math.round(edit.gain*100)}%`,a+5,16);}
 }
 function updateSelection(){selection=[Number($('start').value),Number($('end').value)];selected=$('track-select').value;
   const piano=project.tracks.find(t=>t.id==='piano');const levels=project.piano_cleanup_levels||[];
@@ -336,6 +337,22 @@ async function mutate(path,body={},success='已更新工程',{preservePlayback=f
 }
 function segment(mode,db){return mutate('/api/edit',{command:{type:'segment_gain',track_id:selected,start_seconds:selection[0],end_seconds:selection[1],mode,gain_db:db}},'片段修改已写入工程，可以试听或撤销。');}
 $('apply-gain').onclick=()=>segment('gain',Number($('segment-db').value));$('mute-selection').onclick=()=>segment('mute',0);$('restore-selection').onclick=()=>segment('restore',0);
+const segmentVolume=$('segment-volume'),segmentPreview=$('segment-preview');
+if(segmentVolume&&segmentPreview){
+  const showVolume=()=>{const value=$('segment-volume-value');if(value)value.textContent=`${segmentVolume.value}%`;};
+  segmentVolume.addEventListener('input',showVolume);showVolume();
+  segmentPreview.onclick=async()=>{
+    const status=$('segment-preview-status');if(status)status.textContent='';
+    try{
+      if(busy||!project||!candidateReview)throw Error('请先打开歌曲工程并等待音轨准备完成。');
+      const volume=Number(segmentVolume.value),[start,end]=selection;
+      if(!Number.isInteger(volume)||volume<0||volume>100)throw Error('请选择有效音量。');
+      if(!selected||!Number.isFinite(start)||!Number.isFinite(end)||start<0||end>project.duration||end-start<.01)throw Error('请选择歌曲内有效的轨道和片段。');
+      const command={track_id:selected,start_seconds:start,end_seconds:end,mode:volume===0?'mute':'gain',gain_db:volume===0?0:20*Math.log10(volume/100)};
+      await candidateReview.open({kind:'segment',segment:command,volume,range_seconds:[start,end]});
+    }catch(error){if(status)status.textContent=error.message;notice(error.message,true);}
+  };
+}
 $('remove-track').onclick=()=>mutate('/api/edit',{command:{type:'remove_track',track_id:selected}},'所选轨道已移除，可点击撤销恢复。',{preservePlayback:true});
 $('add-piano').onclick=async()=>{const result=await mutate('/api/edit',{command:{type:'add_piano'}},'已加入钢琴分离候选；原曲是否确实含钢琴仍待试听确认，候选可能含串音。');
   if(result){selected='piano';render();}};
@@ -415,6 +432,7 @@ async function activateProject(identifier,{preservePreview=false}={}){if(busy)th
   catch(e){if(e.message.includes('工程'))await accept(await api('/api/project'));throw e;}finally{setBusy(false);}}
 async function loadInitialProject(){
   try{project=await api('/api/project');
+    if(Number.isFinite(project?.duration)&&project.duration>0){$('start').value=project.duration>45?30:0;$('end').value=Math.min(45,project.duration);}
     if(window.osmanthusIntegrated){render();setBusy(false);notice('选择歌曲开始创作；进入 Studio 或播放混音时载入音轨。');event('metadata-ready');}
     else{await accept(project);setBusy(false);notice('工程已就绪。先试听，再用对话或手动控件修改同一段。');event('ready');}
   }catch(error){notice(error.message,true);$('ready').textContent='载入失败';}

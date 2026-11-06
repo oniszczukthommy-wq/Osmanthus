@@ -7,9 +7,15 @@
       <label>目标轨道<select id="track-select" aria-label="目标轨道"></select></label><button id="remove-track" disabled>移除所选轨道（可撤销）</button>
       <div id="piano-cleanup-panel" hidden><label>钢琴净化<select id="piano-cleanup" aria-label="钢琴净化程度"></select></label><p class="note">净化可减少残留声音，也可能改变钢琴尾音。可切回原始分离对比。</p></div>
       <div class="range-fields"><label>开始 / 秒<input id="start" aria-label="选区开始秒" type="number" min="0" step="0.1" value="30"></label><label>结束 / 秒<input id="end" aria-label="选区结束秒" type="number" min="0" step="0.1" value="45"></label></div>
-      <label>片段音量 / dB<input id="segment-db" aria-label="片段音量dB" type="number" min="-60" max="6" step="1" value="-6"></label>
-      <button id="apply-gain" class="primary" disabled>应用片段音量</button><div class="two-buttons"><button id="mute-selection" disabled>静音这一段</button><button id="restore-selection" disabled>恢复原音量</button></div>
-      <p class="note">片段设置会覆盖选区内此前的静音或音量。其余区间保持原设置。</p>
+      <section class="segment-audition" aria-label="选区音量调整">
+        <div class="segment-audition-heading"><strong>调整选区音量</strong><output id="segment-volume-value" for="segment-volume">50%</output></div>
+        <label for="segment-volume">片段音量</label><input id="segment-volume" type="range" min="0" max="100" step="1" value="50" aria-label="选区音量百分比" disabled>
+        <p class="note">0% 为静音；100% 恢复此段原始音量。应用后会覆盖选区内此前的片段音量设置，其他区间不变。</p>
+        <button id="segment-preview" class="primary" type="button" disabled>试听修改前后</button>
+        <p id="segment-preview-status" class="note" role="status" aria-live="polite"></p>
+        <p class="note">试听不会保存修改，确认应用后才会生效。</p>
+      </section>
+      <div hidden><input id="segment-db" type="number" min="-60" max="6" step="1" value="-6"><button id="apply-gain" disabled>应用片段音量</button><button id="mute-selection" disabled>静音这一段</button><button id="restore-selection" disabled>恢复原音量</button></div>
 
 
     </aside></details><div id="studio-sidebar-history"></div></aside><section class="studio-timeline"><div class="sc-timeline-top"><button type="button" data-studio-sidebar aria-label="手动调整" title="手动调整"><i data-lucide="sliders-horizontal"></i></button><div class="studio-transport-slot"><section class="transport panel">
