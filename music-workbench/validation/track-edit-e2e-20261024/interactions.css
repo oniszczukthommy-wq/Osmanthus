@@ -32,6 +32,17 @@
 .track-left .track-toggle{align-self:flex-start;padding:4px 8px;font-size:10px;line-height:1.4}
 .track.is-disabled .track-toggle{color:#ffbdc1;border-color:#795963}
 .track-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+/* Optional, editable starting points for a first song. */
+#os-mix-28 .studio-beginner-guide{margin:14px 0 4px;padding:11px 12px;border:1px solid #34343b;border-radius:12px;background:#19191d;color:#e4e4eb}
+#os-mix-28 .studio-beginner-guide summary{cursor:pointer;font-size:12px;font-weight:600;line-height:1.5}
+#os-mix-28 .studio-beginner-guide>p{margin:8px 0;color:#aaaab5;font-size:11px;line-height:1.5}
+#os-mix-28 .studio-beginner-row{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:8px 0}
+#os-mix-28 .studio-beginner-row>span{flex:0 0 32px;color:#aaaab5;font-size:11px}
+#os-mix-28 .studio-beginner-row button{min-height:28px;padding:4px 9px;border:1px solid #3e3e48;border-radius:999px;background:#25252b;color:#dfdfe6;font-size:11px;line-height:1.4}
+#os-mix-28 .studio-beginner-row button:hover{background:#33333b;border-color:#676774}
+#os-mix-28 .studio-beginner-row button:focus-visible,#os-mix-28 .studio-beginner-guide summary:focus-visible{outline:2px solid #efd2aa;outline-offset:2px}
+#os-mix-28 .studio-beginner-guide>.studio-beginner-status:empty{display:none}
 .arrangement-panel{border-top:1px solid var(--line);margin-top:22px;padding-top:20px}
 .arrangement-panel h2{font-size:14px}
 .arrangement-panel>button{width:100%}

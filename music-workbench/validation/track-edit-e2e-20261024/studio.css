@@ -249,3 +249,22 @@ html,body{margin:0;min-height:100%;background:#000}#os-mix-28{--studio-sidebar-w
 #os-mix-28 .studio-timeline-guide { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 16px; padding:10px 0; color:#a5a5af; font-size:12px; line-height:1.5; }
 #os-mix-28 #studio-selection-summary { color:#efc3d9; font-variant-numeric:tabular-nums; }
 @media(max-width:650px){#os-mix-28 .studio-ask-shell { width:calc(100% - 16px); margin:16px auto 0; } #os-mix-28 .studio-timeline-guide { align-items:flex-start; flex-direction:column; }}
+
+/* Each version keeps independent listening and explicit selection controls. */
+#os-mix-28 .studio-batch-guide{color:#a4a4ae;font-size:12px;margin:2px 8px 10px;line-height:1.5}
+#os-mix-28 .studio-batch .studio-candidates{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:10px}
+#os-mix-28 .studio-batch .studio-song-option{background:#19191e;border:1px solid #33333b;border-radius:12px;padding:13px;min-height:0}
+#os-mix-28 .studio-batch .studio-song-option.is-playing{border-color:#b1a0c0;background:#242129}
+#os-mix-28 .studio-batch .studio-song-option.is-selected-version{border-color:#b99479}
+#os-mix-28 .studio-version-line{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:5px}
+#os-mix-28 .studio-candidate-copy .studio-version-line small{margin:0;color:#dbbd9b;font-weight:650;font-size:12px}
+#os-mix-28 .studio-version-selected{border-radius:5px;padding:2px 6px;font-size:10px;line-height:1.4;color:#f0d5b4;background:#463a31}
+#os-mix-28 .studio-version-ready{font-size:11px;color:#aaaab5;margin:5px 0 0;line-height:1.4}
+#os-mix-28 .studio-version-ready:empty{display:none}
+#os-mix-28 .studio-batch .studio-candidate-actions{margin:12px 0 0;gap:7px}
+#os-mix-28 .studio-batch .studio-candidate-actions>.studio-candidate-play{position:static;inset:auto;opacity:1;width:auto;height:auto;min-width:72px;min-height:32px;padding:7px 11px;display:inline-flex;gap:6px;border:1px solid #666670;border-radius:18px;background:#2a2a30;color:#f4f4f5;font-size:12px}
+#os-mix-28 .studio-batch .studio-candidate-play svg{width:13px;height:13px;fill:currentColor}
+#os-mix-28 .studio-batch .studio-candidate-actions>.studio-candidate-select{min-height:32px;padding:7px 11px;color:#1b1817;background:#edd4ba;font-size:12px}
+#os-mix-28 .studio-batch .studio-candidate-actions>.studio-candidate-select:hover:not(:disabled){background:#fae5cd;color:#1b1817}
+#os-mix-28 .studio-batch .studio-candidate-actions>button:disabled{opacity:.46;cursor:not-allowed}
+#os-mix-28 .studio-batch .studio-candidate-actions>button:focus-visible{outline:2px solid #f0cba9;outline-offset:3px}
