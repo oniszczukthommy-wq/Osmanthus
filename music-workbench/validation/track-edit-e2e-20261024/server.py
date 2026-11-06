@@ -21,7 +21,7 @@ from workflow import Workflow, STREAM, PROJECTS, valid_id
 from generation_pairs import GenerationPairs
 from generation_drafts import GenerationDrafts
 from create_flow import CreationFlow, fields as creation_fields
-from mv_bridge import MVHandoffs, proxy_mv
+from mv_bridge import MVHandoffs, proxy_mv, attach_metadata_fingerprint
 from speech import SpeechInput,MAX_BYTES as MAX_SPEECH_BYTES
 from artwork import Artwork
 from share import ShareManager
@@ -204,7 +204,7 @@ def mv_source(identifier,expected=None,freeze=False):
                         start=line.get('start_seconds',line.get('start'));end=line.get('end_seconds',line.get('end'))
                         if isinstance(start,(int,float)) and isinstance(end,(int,float)) and 0<=start<end<=info['duration']+.15:info['timed_lyrics'].append({'start':start,'end':end,'text':line.get('text','')})
             except (ValueError,RuntimeError,OSError):pass
-        return info
+        return attach_metadata_fingerprint(info,expected)
 
 def assistant(body):
     global PROJECT
