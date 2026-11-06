@@ -253,10 +253,8 @@ function render(){
   const hasSolo=ordered.some(t=>t.solo);
   for(const track of ordered){const enabled=!track.muted&&(!hasSolo||track.solo);
     const row=document.createElement('div');row.className='track '+(enabled?'is-enabled':'is-disabled');row.dataset.id=track.id;row.style.setProperty('--track-color',track.color);
-    row.innerHTML=`<div class="track-left"><button class="track-name" aria-label="${track.label}声音开关" aria-pressed="${enabled}" title="点击${enabled?'关闭':'开启'}${track.label}声音"><span class="dot"></span>${track.label}<span class="track-status">${enabled?'已开启':'已关闭'}</span></button><label>dB <input type="number" min="-60" max="6" step="1" value="${track.gain_db}" aria-label="${track.label}整轨音量dB"></label></div><div class="wave-wrap" role="group" aria-label="${track.label}波形，拖动选择时间"><canvas></canvas><div class="selection"></div><div class="playhead" role="slider" tabindex="0" aria-label="${track.label}播放游标" aria-valuemin="0" aria-valuemax="${project.duration}" aria-valuenow="${Math.max(0,liveTime())}"></div></div>`;
-    const patch=(values)=>mutate('/api/edit',{command:{type:'track_mix',track_id:track.id,...values}},'已修改轨道混音设置');
+    row.innerHTML=`<div class="track-left"><button class="track-name" aria-label="${track.label}声音开关" aria-pressed="${enabled}" title="点击${enabled?'关闭':'开启'}${track.label}声音"><span class="dot"></span>${track.label}<span class="track-status">${enabled?'已开启':'已关闭'}</span></button></div><div class="wave-wrap" role="group" aria-label="${track.label}波形，拖动选择时间"><canvas></canvas><div class="selection"></div><div class="playhead" role="slider" tabindex="0" aria-label="${track.label}播放游标" aria-valuemin="0" aria-valuemax="${project.duration}" aria-valuenow="${Math.max(0,liveTime())}"></div></div>`;
     row.querySelector('.track-name').onclick=()=>toggleTrack(track.id);
-    row.querySelector('input').onchange=e=>patch({gain_db:Number(e.target.value)});
     const wrap=row.querySelector('.wave-wrap');let dragStart=null;
     const seconds=e=>Math.max(0,Math.min(project.duration,(e.clientX-wrap.getBoundingClientRect().left)/wrap.clientWidth*project.duration));
     wrap.onpointerdown=e=>{if(busy||e.target.closest('.playhead'))return;dragStart=seconds(e);wrap.setPointerCapture(e.pointerId);$('track-select').value=track.id;};
