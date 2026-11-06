@@ -9,6 +9,7 @@ import urllib.request
 from contextlib import nullcontext
 from runtime_support import load_env as read_env
 from paid_usage import paid_call
+from provider_errors import http_failure
 
 
 def load_env():
@@ -30,8 +31,13 @@ def request_json(url, key, payload=None, timeout=60):
             with opener.open(request, timeout=timeout) as response:
                 return json.load(response)
     except urllib.error.HTTPError as error:
-        detail = error.read(1600).decode('utf-8', 'replace').replace(key, '<redacted>')
-        raise RuntimeError(f'HTTP {error.code}: {detail}') from None
+        # Provider bodies may contain user data or credentials. Do not expose or
+        # persist them in the job's user-visible status.
+        raise RuntimeError(http_failure(error.code, 'music', submission=payload is not None)) from None
+    except (urllib.error.URLError, TimeoutError, OSError):
+        if payload is None:
+            raise  # Polling uses bounded retries for transient connection errors.
+        raise RuntimeError('音乐服务连接中断，提交结果尚未确认；请先查看原任务状态，系统不会自动重发。') from None
 
 
 def download(url, path):

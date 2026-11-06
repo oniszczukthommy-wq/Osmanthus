@@ -278,10 +278,9 @@ class Artwork:
 
     def recover(self):
         with self.lock:
+            if self.running:return  # Do not interfere with a live explicit run.
             for job in self.jobs.values():
-                if job['id']==self.running:continue
-                if job['stage'] in ('generating','downloading'):
-                    if (self.directory/job['id']/'response.json').is_file():job.update(stage='queued',error=None)
-                    else:job.update(stage='interrupted',error='服务重启前绘图提交结果不明，未自动重复扣费')
-                    self.save(job)
-            self.launch_next()
+                if job['stage'] in ('queued','generating','downloading'):
+                    # Paused only in memory; restart must not dispatch queued
+                    # paid image requests. Explicit resume/retry remains available.
+                    job.update(stage='interrupted',error='服务重启后封面任务已暂停；请先核对，再手动恢复或重试。')

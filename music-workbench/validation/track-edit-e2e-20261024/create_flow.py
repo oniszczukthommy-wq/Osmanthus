@@ -102,12 +102,12 @@ class CreationFlow:
         with self.lock:
             raw=self._batch(state);batch=self.pairs.public(raw) if raw else None
             result={k:copy.deepcopy(state.get(k)) for k in ('id','mode','created_at','policy','error')}
-            result.update(request_id=state['id'],stage=batch['stage'] if batch else ('error' if state['state'] in ('error','accepted') else 'submitting'),
+            result.update(request_id=state['id'],stage=batch['stage'] if batch else ('error' if state['state'] in ('error','accepted') or state.get('error') else 'submitting'),
                           batch_id=state['id'],batch=batch,input=copy.deepcopy(state['payload']))
             if batch:result['error']=batch.get('error')
             elif state['state']=='accepted':result['error']='原歌曲批次记录不完整，已停止重发以免重复扣费'
             orphaned=any(j.get('batch_id')==state['id'] for j in self.workflow.jobs.values())
-            result['can_resume']=bool(batch.get('can_resume_batch')) if batch else state['state']=='error' and not orphaned
+            result['can_resume']=bool(batch.get('can_resume_batch')) if batch else state['state'] in ('error','authorized') and not orphaned
             return result
 
     def list(self):
@@ -190,7 +190,10 @@ class CreationFlow:
                 if state['id'] in self.cancelled:continue
                 try:
                     if self._batch(state):self._bind(state)
-                    elif state['state']=='authorized':self._submit(state)
+                    elif state['state']=='authorized':
+                        # User approval preceded batch creation, but restarting
+                        # the service must never trigger a new paid request.
+                        state['error']='服务重启后未找到生成任务，已暂停自动提交；请先核对原请求。'
                 except (ValueError,RuntimeError,OSError):continue
 
     def write_lyrics(self,body):

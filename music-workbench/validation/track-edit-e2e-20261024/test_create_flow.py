@@ -192,13 +192,17 @@ class CreationFlowTests(unittest.TestCase):
         self.assertEqual(self.flow.start(self.body)['stage'],'error')
         self.flow.resume(self.body['request_id']);self.pair_launch.assert_called_once()
 
-    def test_crash_after_intent_before_batch_recovers_once(self):
+    def test_crash_after_intent_requires_explicit_resume(self):
         with patch.object(self.pairs,'start',side_effect=SystemExit('lost process')):
             with self.assertRaises(SystemExit):self.flow.start(self.body)
         self.assertEqual(self.flow.requests[self.body['request_id']]['state'],'authorized')
         _,pairs,drafts,flow=self.restore()
         with patch.object(pairs,'launch_draft') as start,patch.object(drafts,'launch') as lyric:
-            flow.recover();flow.recover();flow.start(self.body)
+            flow.recover();flow.recover()
+            start.assert_not_called();lyric.assert_not_called()
+            state=flow.public(flow.read(self.body['request_id']))
+            self.assertTrue(state['can_resume']);self.assertIn('暂停自动提交',state['error'])
+            flow.start(self.body)  # Only the user's explicit request resumes.
             start.assert_called_once();lyric.assert_not_called()
 
     def test_crash_after_batch_creation_recovers_by_link_not_resubmission(self):

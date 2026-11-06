@@ -89,13 +89,19 @@ await test('empty-candidate failure renders real recovery button and disappears 
  await children['[data-batch-resume]'].onclick();assert.deepEqual(resumed,[id]);
  context.creations=[];vm.runInNewContext('renderBatches();',context);assert.equal(removed,true);assert.equal(nodes.size,0);
 });
-await test('waiting stages stay quiet while playable results and errors remain visible',async()=>{
+await test('waiting stages show progress while playable results and errors take priority',async()=>{
  assert.match(creationProgress({candidates:[{media:{stream:'/stream'}}]}),/可试听/);
  assert.match(candidateProgress({media:{stream:'/stream'}},'正在生成'),/可试听/);
  assert.equal(creationProgress({candidates:[{status:'done'}]}),'');
- assert.equal(creationProgress({stage:'lyrics',candidates:[]}),'');
- assert.equal(candidateProgress({stage:'queued'},'模型生成中'),'');
- assert.equal(candidateProgress({stage:'generating'},'模型生成中'),'');
+ assert.match(creationProgress({stage:'lyrics',candidates:[]}),/准备歌词/);
+ assert.match(creationProgress({stage:'submitting',candidates:[]}),/提交/);
+ assert.match(creationProgress({stage:'preparing',candidates:[]}),/准备编辑音轨/);
+ assert.match(candidateProgress({stage:'queued'},''),/排队/);
+ assert.match(candidateProgress({stage:'generating'},''),/生成/);
+ assert.match(candidateProgress({stage:'separating'},''),/分轨/);
+ assert.match(creationProgress({stage:'generating',candidates:[{media:{stream:'/stream'}}]}),/可试听/);
+ assert.equal(creationProgress({stage:'generating',error:'生成未完成',candidates:[{media:{stream:'/stream'}}]}),'生成未完成');
+ assert.equal(candidateProgress({stage:'error',media:{stream:'/stream'}},'失败'),'失败');
  assert.match(creationProgress({candidates:[{media:{complete:'/a'}},{media:{complete:'/b'}}]}),/试听并选择/);
  assert.equal(creationProgress({error:'本次生成失败'}),'本次生成失败');
 });

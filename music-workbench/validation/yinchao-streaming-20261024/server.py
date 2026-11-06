@@ -110,7 +110,9 @@ def worker(job:dict)->None:
                     finish_download(job)
                     return
                 if status in ('fail','cancelled'):
-                    raise RuntimeError('Provider generation failed: '+str(song.get('error','unknown'))[:500])
+                    # Provider error bodies are not safe to echo into the UI or
+                    # the event log; they may contain sensitive request details.
+                    raise RuntimeError('音乐服务返回任务失败或取消；请先查看原任务状态，再决定后续操作。')
             time.sleep(2)
         raise TimeoutError('Polling timed out; task ID retained, no automatic new paid submission')
     except Exception as error:

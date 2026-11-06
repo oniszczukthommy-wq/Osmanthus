@@ -139,9 +139,11 @@ class GenerationDrafts:
         with self.lock:
             for draft in self.drafts.values():
                 if draft['stage']=='writing':
-                    try:self.launch(draft)
-                    except PaidUsageError as error:
-                        draft.update(stage='error',error=str(error));self.save_state(draft)
+                    # The earlier provider request may already have been billed.
+                    # A server restart is not consent to send it again.
+                    draft.update(stage='error',error='服务重启前的写词结果尚未确认，已停止自动重试；原创作内容已保留，请先核对任务。')
                 elif draft['stage']=='confirmed':
-                    try:self.start_approved(draft)
-                    except (RuntimeError,ValueError):pass
+                    if draft.get('batch_id') not in self.pairs.batches:
+                        # Approval was persisted before a batch was created.
+                        # Never create a new paid task solely because we restarted.
+                        draft.update(generation_error='未找到已确认歌词对应的生成任务，已停止自动提交；请先核对原任务。')
