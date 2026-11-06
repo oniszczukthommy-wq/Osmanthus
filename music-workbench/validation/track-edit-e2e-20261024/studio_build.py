@@ -51,6 +51,7 @@ def build():
     tools=legacy.get('div','instrument-actions')+'<p id="instrument-status" class="note"></p>'
     timeline=timeline.replace(legacy.get('div','section-heading'),'').replace(legacy.get('p',id='instrument-status'),'')
     timeline=re.sub(r'<p class="timeline-help">.*?</p>','',timeline,flags=re.S)
+    timeline=timeline.replace('<div id="ruler">','<div class="studio-timeline-guide"><span>选择轨道 · 点击波形定位 · 拖动波形选择片段</span><strong id="studio-selection-summary">正在读取选区…</strong></div><div id="ruler">')
     timeline=timeline.replace('<div id="tracks">','<div id="studio-mix-lane"><span>整曲</span><div class="wave-wrap"><canvas id="studio-mix-canvas"></canvas><div class="selection"></div><div class="playhead" aria-label="整曲播放游标" role="slider" tabindex="0"></div></div></div><div id="tracks">')
     transport=legacy.get('section','transport').replace('</section>','<label class="studio-volume">音量<input id="studio-volume" aria-label="总播放音量" type="range" min="0" max="1" value="1" step=".01"></label></section>')
     lyrics=legacy.get('section','lyric-panel');score=legacy.get('section','vocal-score-panel')

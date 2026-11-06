@@ -97,10 +97,10 @@ function switchIntent(id,enabled){
   const t=project.tracks.find(t=>t.id===id);if(t)t.muted=!enabled;
 }
 function paintSwitches(){
-  for(const t of project.tracks){const enabled=enabledTrack(t),row=document.querySelector(`.track[data-id="${t.id}"]`),button=row?.querySelector('.track-name');
+  for(const t of project.tracks){const enabled=enabledTrack(t),row=document.querySelector(`.track[data-id="${t.id}"]`),button=row?.querySelector('.track-toggle');
     if(button&&button.getAttribute('aria-pressed')!==String(enabled)){
-      button.setAttribute('aria-pressed',enabled);button.title=`点击${enabled?'关闭':'开启'}${t.label}声音`;
-      button.querySelector('.track-status').textContent=enabled?'已开启':'已关闭';
+      button.setAttribute('aria-pressed',enabled);button.title=`点击${enabled?'静音':'开启'}${t.label}`;
+      button.querySelector('.track-status').textContent=enabled?'声音开启':'已静音';
       row.classList.toggle('is-enabled',enabled);row.classList.toggle('is-disabled',!enabled);}
     if(playing&&mode==='mix'){const node=nodes.find(n=>n.id===t.id),gain=enabled?10**(t.gain_db/20)*project.master_gain:0;
       if(node&&node.targetGain!==gain){node.gain.gain.cancelScheduledValues(audioContext.currentTime);
@@ -214,8 +214,10 @@ function updateSelection(){selection=[Number($('start').value),Number($('end').v
   $('piano-cleanup').replaceChildren(...levels.map(level=>new Option({'original':'原始分离','gentle':'轻度净化','strong':'较强净化'}[level],level)));
   $('piano-cleanup').value=piano?.cleanup||'original';
   for(const row of document.querySelectorAll('.track')){const isSelected=row.dataset.id===selected;row.classList.toggle('selected',isSelected);
+    const name=row.querySelector('.track-name');if(name)name.setAttribute('aria-pressed',String(isSelected));
+    const marker=row.querySelector('.track-selection-status');if(marker)marker.textContent=isSelected?'正在编辑':'选择编辑';
     const overlay=row.querySelector('.selection');overlay.hidden=!isSelected;
-    overlay.style.left=`${selection[0]/project.duration*100}%`;overlay.style.width=`${Math.max(0,selection[1]-selection[0])/project.duration*100}%`;}paintArrangementUI();}
+    overlay.style.left=`${selection[0]/project.duration*100}%`;overlay.style.width=`${Math.max(0,selection[1]-selection[0])/project.duration*100}%`;}paintArrangementUI();window.dispatchEvent(new Event('track-editor-selection-change'));}
 function renderRuler(){
   if(!project)return;
   const scale=$('ruler-scale');const width=scale.clientWidth||700;
@@ -253,8 +255,17 @@ function render(){
   const hasSolo=ordered.some(t=>t.solo);
   for(const track of ordered){const enabled=!track.muted&&(!hasSolo||track.solo);
     const row=document.createElement('div');row.className='track '+(enabled?'is-enabled':'is-disabled');row.dataset.id=track.id;row.style.setProperty('--track-color',track.color);
-    row.innerHTML=`<div class="track-left"><button class="track-name" aria-label="${track.label}声音开关" aria-pressed="${enabled}" title="点击${enabled?'关闭':'开启'}${track.label}声音"><span class="dot"></span>${track.label}<span class="track-status">${enabled?'已开启':'已关闭'}</span></button></div><div class="wave-wrap" role="group" aria-label="${track.label}波形，拖动选择时间"><canvas></canvas><div class="selection"></div><div class="playhead" role="slider" tabindex="0" aria-label="${track.label}播放游标" aria-valuemin="0" aria-valuemax="${project.duration}" aria-valuenow="${Math.max(0,liveTime())}"></div></div>`;
-    row.querySelector('.track-name').onclick=()=>toggleTrack(track.id);
+    row.innerHTML=`<div class="track-left"><button type="button" class="track-name" aria-pressed="false"><span class="dot"></span><span class="track-label"></span><span class="track-selection-status">选择编辑</span></button><button type="button" class="track-toggle" aria-pressed="${enabled}"><span class="track-status">${enabled?'声音开启':'已静音'}</span></button></div><div class="wave-wrap" role="group"><canvas></canvas><div class="selection"></div><div class="playhead" role="slider" tabindex="0" aria-valuemin="0" aria-valuemax="${project.duration}" aria-valuenow="${Math.max(0,liveTime())}"></div></div>`;
+    const nameButton=row.querySelector('.track-name'),toggleButton=row.querySelector('.track-toggle');
+    nameButton.querySelector('.track-label').textContent=track.label;
+    nameButton.setAttribute('aria-label',`选择${track.label}作为编辑轨道`);
+    nameButton.title=`选择${track.label}作为编辑轨道`;
+    nameButton.onclick=()=>{$('track-select').value=track.id;updateSelection();};
+    toggleButton.setAttribute('aria-label',`${track.label}声音开关`);
+    toggleButton.title=`点击${enabled?'静音':'开启'}${track.label}`;
+    toggleButton.onclick=()=>toggleTrack(track.id);
+    row.querySelector('.wave-wrap').setAttribute('aria-label',`${track.label}波形，拖动选择时间`);
+    row.querySelector('.playhead').setAttribute('aria-label',`${track.label}播放游标`);
     const wrap=row.querySelector('.wave-wrap');let dragStart=null;
     const seconds=e=>Math.max(0,Math.min(project.duration,(e.clientX-wrap.getBoundingClientRect().left)/wrap.clientWidth*project.duration));
     wrap.onpointerdown=e=>{if(busy||e.target.closest('.playhead'))return;dragStart=seconds(e);wrap.setPointerCapture(e.pointerId);$('track-select').value=track.id;};

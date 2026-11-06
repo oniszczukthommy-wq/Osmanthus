@@ -192,10 +192,11 @@ function renderEditor(force=false){const p=engine?.getProject();if(!p)return;ren
   lastLibrary='';
  }
  const range=s.selection,track=p.tracks.find(t=>t.id===range.track_id);const selKey=JSON.stringify(range);
- if(force||selKey!==lastSelection){lastSelection=selKey;$('studio-target').innerHTML=`<strong>${esc(track?.label||'整曲')}</strong><span>${clock(range.start_seconds)}–${clock(range.end_seconds)}</span>`;const overlay=q('#studio-mix-lane .selection');overlay.style.left=range.start_seconds/p.duration*100+'%';overlay.style.width=(range.end_seconds-range.start_seconds)/p.duration*100+'%';}
+ if(force||selKey!==lastSelection){lastSelection=selKey;$('studio-target').innerHTML=`<strong>${esc(track?.label||'整曲')}</strong><span>${clock(range.start_seconds)}–${clock(range.end_seconds)}</span>`;const summary=$('studio-selection-summary');if(summary)summary.textContent=`当前编辑：${track?.label||'整曲'} · ${clock(range.start_seconds)}–${clock(range.end_seconds)}`;const overlay=q('#studio-mix-lane .selection');overlay.style.left=range.start_seconds/p.duration*100+'%';overlay.style.width=(range.end_seconds-range.start_seconds)/p.duration*100+'%';}
  const sections=validSections();const sk=sections?.navigation_fingerprint||JSON.stringify(sections?.sections);if(sk!==lastSections){lastSections=sk;$('studio-sections').innerHTML=(sections?.sections||[]).filter(s=>Number.isFinite(s.start_seconds)&&Number.isFinite(s.end_seconds)).map(s=>`<button data-section-id="${esc(s.id)}">${esc(s.label)}</button>`).join('')+'<button data-studio-navigation>校正段落</button>';}
 }
 const wrap=q('#studio-mix-lane .wave-wrap');let start=null;
+window.addEventListener('track-editor-selection-change',()=>renderEditor());
 const seconds=e=>{const r=wrap.getBoundingClientRect();return Math.max(0,Math.min(1,(e.clientX-r.left)/r.width))*engine.getProject().duration;};
 wrap.onpointerdown=e=>{if(e.target.closest('.playhead')||!engine?.ready())return;start=seconds(e);wrap.setPointerCapture(e.pointerId);};
 wrap.onpointermove=e=>{if(start===null)return;const end=seconds(e);if(Math.abs(end-start)>.05)engine.setSelection(null,Math.min(start,end),Math.max(start,end));};

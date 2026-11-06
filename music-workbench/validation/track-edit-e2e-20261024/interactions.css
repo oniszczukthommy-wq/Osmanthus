@@ -22,6 +22,16 @@
 .track-status{font-size:9px;margin-left:auto;white-space:nowrap}
 .track.is-disabled canvas{opacity:.28}
 .track-name:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+/* Selection and the sound switch remain separate in the legacy editor too. */
+.track-left{display:flex;flex-direction:column;align-items:stretch;gap:6px;min-width:0}
+.track-left .track-name{min-width:0;display:flex;align-items:center;text-align:left}
+.track-left .track-name .dot{background:var(--track-color)}
+.track-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.track-selection-status{margin-left:auto;color:#a3adbb;font-size:10px;white-space:nowrap}
+.track.selected .track-selection-status{color:var(--accent)}
+.track-left .track-toggle{align-self:flex-start;padding:4px 8px;font-size:10px;line-height:1.4}
+.track.is-disabled .track-toggle{color:#ffbdc1;border-color:#795963}
+.track-toggle:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
 .arrangement-panel{border-top:1px solid var(--line);margin-top:22px;padding-top:20px}
 .arrangement-panel h2{font-size:14px}
 .arrangement-panel>button{width:100%}
