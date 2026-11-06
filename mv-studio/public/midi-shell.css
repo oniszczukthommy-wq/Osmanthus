@@ -1,0 +1,15 @@
+:root { color-scheme:dark; background:#0c0d0d; color:#f2f3ef; font:14px/1.5 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif; }
+* { box-sizing:border-box; }
+body { margin:0; min-width:0; }
+#midi-root { width:min(1600px,100%); margin:0 auto; padding:0 18px 20px; }
+.midi-app-header { height:64px; display:flex; align-items:center; gap:18px; border-bottom:1px solid #292e2b; margin-bottom:18px; }
+.midi-home-link { color:#b6c3af; text-decoration:none; border:1px solid #343d34; padding:7px 11px; border-radius:8px; white-space:nowrap; }
+.midi-home-link:hover { color:#eef5e8; background:#272f27; }
+.midi-app-brand { font-weight:700; font-size:15px; letter-spacing:.03em; }
+.midi-app-title { color:#a7b3a1; border-left:1px solid #343a34; padding-left:18px; }
+.midi-loading,.midi-save-status { color:#aeb9ab; font-size:12px; }
+.midi-save-status { margin:10px 4px 0; }
+.midi-save-status.is-error,.midi-import-notice { color:#eacb95; }
+.midi-import-notice { margin:0 0 12px; padding:10px 14px; border:1px solid #66583f; border-radius:8px; background:#2b251c; font-size:12px; }
+.midi-import-notice[hidden] { display:none; }
+@media(max-width:600px) { #midi-root { padding:0 8px 14px; } .midi-app-header { height:56px; gap:10px; } .midi-app-title { padding-left:10px; } .midi-app-brand { display:none; } }
