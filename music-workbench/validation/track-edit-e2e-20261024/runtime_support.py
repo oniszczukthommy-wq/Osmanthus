@@ -76,6 +76,22 @@ def check_process(pid):
         raise ProcessLookupError('Worker process no longer exists') from exc
 
 
+def acquire_demucs_lock(root):
+    """Wait for the shared Demucs slot; closing the returned file releases it."""
+    import time
+    lockdir=Path(root)/'.local';lockdir.mkdir(parents=True,exist_ok=True)
+    guard=(lockdir/'demucs-compute.lock').open('a')
+    try:
+        while True:
+            try:
+                file_lock.flock(guard,file_lock.LOCK_EX|file_lock.LOCK_NB)
+                return guard
+            except BlockingIOError:
+                time.sleep(1)
+    except BaseException:
+        guard.close();raise
+
+
 if os.name != 'nt':
     import fcntl as file_lock
 else:

@@ -31,3 +31,14 @@
 #os-mix-28 .stem-row a:hover{text-decoration:underline}
 #os-mix-28 .stem-error{color:#ffb3b6;font-size:14px;line-height:1.6;margin:16px 0}
 @media(max-width:650px){#os-mix-28 main.studio-shell-main.stem-page{padding:28px 18px 110px}#os-mix-28 .stem-row{grid-template-columns:1fr auto;gap:10px}#os-mix-28 .stem-row audio{grid-column:1/-1;grid-row:2}#os-mix-28 .stem-results-header{align-items:flex-start;flex-direction:column}}
+
+#os-mix-28 .stem-quality{border:0;padding:20px 4px 0;margin:0;display:flex;gap:10px;flex-wrap:wrap}
+#os-mix-28 .stem-quality legend{padding:0;font-size:14px;color:#d2d2d7;font-weight:600}
+#os-mix-28 .stem-quality label{display:flex;align-items:flex-start;gap:10px;padding:12px 14px;border:1px solid #3b3b41;border-radius:12px;cursor:pointer;min-width:150px}
+#os-mix-28 .stem-quality label:has(input:checked){border-color:#d6bb8c;background:#26231e}
+#os-mix-28 .stem-quality label:has(input:disabled){opacity:.55;cursor:not-allowed}
+#os-mix-28 .stem-quality input{accent-color:#d6bb8c;margin:3px 0 0}
+#os-mix-28 .stem-quality span{display:flex;flex-direction:column;gap:5px}
+#os-mix-28 .stem-quality strong{font-size:14px}
+#os-mix-28 .stem-quality small,#os-mix-28 .stem-quality-note{font-size:12px;color:#aaaab2}
+#os-mix-28 .stem-quality-note{flex-basis:100%;margin:0;line-height:1.5}

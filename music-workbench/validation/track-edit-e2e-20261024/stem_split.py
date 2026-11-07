@@ -4,6 +4,7 @@ import argparse, json, os, re, shutil, subprocess, sys, threading, time, uuid
 from pathlib import Path
 from project import ROOT, save_json
 from runtime_support import check_process, media_binary
+from separation_models import fine_problem, fine_repo
 
 MAX_BYTES = 150 * 1024 * 1024
 MAX_SECONDS = 600
@@ -36,6 +37,7 @@ class StemSplit:
     def public(self, state):
         identifier=state['id']; status=state['status']
         result={k:state.get(k) for k in ('id','status','error','filename')}
+        result.update(quality=state.get('quality','standard'),model=state.get('model','htdemucs'),processing_seconds=state.get('processing_seconds'))
         result['stems']=[{'id':name,'label':label,'url':f'/api/stem-split/jobs/{identifier}/stems/{name}.wav'} for name,label in LABELS.items()] if status=='ready' else []
         return result
 
@@ -46,7 +48,13 @@ class StemSplit:
         if path.is_symlink() or not path.is_file(): raise ValueError('找不到分轨文件')
         return path
 
-    def start(self, stream, length, filename):
+    def capabilities(self):
+        problem=fine_problem(self.root)
+        return {'standard':True,'fine':problem is None,'fine_error':problem}
+
+    def start(self, stream, length, filename, quality='standard'):
+        if quality not in ('standard','fine'): raise ValueError('分轨模式无效')
+        if quality=='fine' and (problem:=fine_problem(self.root)): raise ValueError(problem)
         if not isinstance(length,int) or not 0<length<=MAX_BYTES: raise ValueError('音频文件需大于 0 且不超过 150 MB')
         filename=str(filename or '').replace('\\','/').split('/')[-1].strip()
         extension=Path(filename).suffix.lower()
@@ -73,7 +81,9 @@ class StemSplit:
                         (extension=='.m4a' and len(head)>=12 and head[4:8]==b'ftyp') or
                         (extension=='.mp3' and (head[:3]==b'ID3' or len(head)>=2 and head[0]==255 and head[1]&224==224))):
                     raise ValueError('文件内容与音频格式不符，请检查后重新上传')
-                state={'id':identifier,'filename':filename,'extension':extension,'status':'queued','error':None,'created_at':time.time()}
+                state={'id':identifier,'filename':filename,'extension':extension,'quality':quality,
+                       'model':'htdemucs_ft' if quality=='fine' else 'htdemucs',
+                       'status':'queued','error':None,'created_at':time.time()}
                 save_json(folder/'state.json',state)
                 flags=getattr(subprocess,'CREATE_NO_WINDOW',0)
                 with (folder/'worker.log').open('ab') as log:
@@ -101,11 +111,16 @@ def worker(root, identifier):
         if info.frames<=0: raise ValueError('音频为空，请检查文件')
         if info.frames/info.samplerate>MAX_SECONDS: raise ValueError('音频时长不能超过 10 分钟')
         output=folder/'output'; output.mkdir()
+        quality=state.get('quality','standard')
+        if quality not in ('standard','fine'): raise ValueError('分轨模式无效')
+        if quality=='fine' and (problem:=fine_problem(root)): raise ValueError(problem)
         command=[sys.executable,str(Path(__file__).resolve().parent/'prepare.py'),'--source',str(decoded),'--output',str(output),'--title',state['filename'],'--project-id',identifier]
-        result=subprocess.run(command,stdout=sys.stdout,stderr=subprocess.STDOUT,timeout=1200,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+        if quality=='fine': command+=['--model','htdemucs_ft','--repo',str(fine_repo(root))]
+        result=subprocess.run(command,stdout=sys.stdout,stderr=subprocess.STDOUT,timeout=7200 if quality=='fine' else 1200,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         if result.returncode: raise RuntimeError('分轨处理失败，请检查模型与依赖后重试')
         if not all((output/(name+'.wav')).is_file() for name in LABELS): raise RuntimeError('分轨结果不完整，请重试')
-        update('ready',finished_at=time.time())
+        report=json.loads((output/'preparation.json').read_text())
+        update('ready',finished_at=time.time(),processing_seconds=report.get('separation_seconds'))
     except Exception as exc:
         update('error',error=(str(exc) if isinstance(exc,(ValueError,RuntimeError)) else '分轨处理失败，请重试')[:300],finished_at=time.time())
 

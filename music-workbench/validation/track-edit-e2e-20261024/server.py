@@ -438,6 +438,7 @@ class Handler(BaseHTTPRequestHandler):
             try:return self.serve(MV_HANDOFFS.audio(match[1])) if match[2] else self.json(200,MV_HANDOFFS.public(MV_HANDOFFS.read(match[1])))
             except ValueError as exc:return self.json(404,{'error':str(exc)})
             except RuntimeError as exc:return self.json(409,{'error':str(exc)})
+        if path=='/api/stem-split/capabilities':return self.json(200,STEM_SPLIT.capabilities())
         match=re.fullmatch(r'/api/stem-split/jobs/([a-f0-9-]+)(?:/stems/([a-z]+\.wav))?',path)
         if match:
             try:return self.serve(STEM_SPLIT.asset(match[1],match[2])) if match[2] else self.json(200,STEM_SPLIT.public(STEM_SPLIT.read(match[1])))
@@ -606,7 +607,8 @@ class Handler(BaseHTTPRequestHandler):
                     self.close_connection=True
                     raise ValueError('音频文件需大于 0 且不超过 150 MB')
                 filename=parse_qs(urlparse(self.path).query).get('filename',[''])[0]
-                try:return self.json(202,STEM_SPLIT.start(self.rfile,length,filename))
+                quality=parse_qs(urlparse(self.path).query).get('quality',['standard'])[0]
+                try:return self.json(202,STEM_SPLIT.start(self.rfile,length,filename,quality=quality))
                 except Exception:
                     self.close_connection=True
                     raise

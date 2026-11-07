@@ -60,6 +60,14 @@ MV_DISABLE_MODELS=1 npm start
 
 新电脑安装 `music-workbench/requirements-core.txt` 后，可以用空白工作台启动，不要求已有歌曲工程。启动器读取根目录 `.env`，也兼容 `music-workbench/validation/.env.local`。支持从 PATH 或配置解析 FFmpeg，Windows / macOS 的虚拟环境路径分别处理。原电脑的歌曲、分轨 WAV、音色试听、缓存和 API Key 不在仓库中；高级本地模型和音源需按许可另行准备。
 
+上传音频分轨提供标准模式（htdemucs）和可选精细模式（htdemucs_ft）。精细模式需要额外的约 337 MB 官方模型文件，分离通常更慢；效果因歌曲和声部而异。模型文件不包含在 GitHub 中，精细模式处理时不会自动联网下载。安装好本项目的分轨依赖后，可在项目根目录用项目 Python 手动执行：
+
+```sh
+python music-workbench/validation/track-edit-e2e-20261024/install_demucs_ft.py --download
+```
+
+该命令从 Demucs 官方源下载四个权重并按官方文件名中的 SHA-256 前缀校验，保存到被 Git 忽略的 `music-workbench/validation/track-edit-e2e-20261024/.local/models/htdemucs-ft/`。也可以将 `--download` 换成 `--source-dir <权重所在目录>` 安装已经下载的文件。已有不匹配文件不会被覆盖，需由使用者检查。模型许可及归属见 [Demucs 官方仓库](https://github.com/facebookresearch/demucs)。
+
 ## 目录
 
 - `mv-studio/`：独立 MV 应用与测试。
