@@ -1,0 +1,33 @@
+#os-mix-28 main.studio-shell-main.stem-page{padding:clamp(28px,5vw,72px) clamp(24px,6vw,92px) calc(var(--studio-player-height) + 36px);overflow:auto}
+#os-mix-28 .stem-wrap{max-width:980px;margin:0 auto}
+#os-mix-28 .stem-heading{margin:0 0 30px}
+#os-mix-28 .stem-heading h1{font-size:clamp(32px,4vw,46px);font-weight:600;margin:12px 0}
+#os-mix-28 .stem-heading p,#os-mix-28 .stem-results-header p{font-size:15px;color:#a5a5ac;line-height:1.7;margin:0}
+#os-mix-28 .stem-eyebrow{color:#d6bb8c;font-size:13px;letter-spacing:.08em}
+#os-mix-28 .stem-card{border:1px solid #303036;border-radius:20px;background:#151517;padding:18px}
+#os-mix-28 .stem-drop{border:1.5px dashed #57575e;border-radius:14px;min-height:245px;display:flex;align-items:center;justify-content:center;flex-direction:column;text-align:center;padding:26px;cursor:pointer;background:#1a1a1d;transition:border-color .15s,background .15s}
+#os-mix-28 .stem-drop:hover,#os-mix-28 .stem-drop.is-dragging,#os-mix-28 .stem-drop:focus-visible{border-color:#dec594;background:#222124;outline:none}
+#os-mix-28 .stem-drop.is-disabled{cursor:default;opacity:.65}
+#os-mix-28 .stem-drop-icon{width:52px;height:52px;border-radius:16px;background:#303034;display:grid;place-items:center;color:#eee}
+#os-mix-28 .stem-drop h2{font-size:18px;margin:18px 0 7px;font-weight:550}
+#os-mix-28 .stem-drop p{font-size:13px;color:#96969e;margin:0 0 20px}
+#os-mix-28 .stem-selected{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:18px 4px 8px}
+#os-mix-28 .stem-selected div{min-width:0;display:flex;flex-direction:column;gap:5px}
+#os-mix-28 .stem-filename{overflow-wrap:anywhere;font-size:14px}
+#os-mix-28 .stem-size{font-size:12px;color:#92929a}
+#os-mix-28 .stem-actions{display:flex;align-items:center;gap:16px;padding:18px 4px 2px;flex-wrap:wrap}
+#os-mix-28 .stem-actions span{font-size:12px;color:#919198}
+#os-mix-28 .stem-progress,#os-mix-28 .stem-results{margin-top:22px;border:1px solid #303036;background:#151517;border-radius:18px;padding:22px}
+#os-mix-28 .stem-progress strong{font-size:15px}
+#os-mix-28 .stem-progress p{color:#a5a5ac;margin:8px 0 16px;font-size:13px}
+#os-mix-28 .stem-progress progress{width:100%;height:7px;accent-color:#e4ca99}
+#os-mix-28 .stem-results-header{display:flex;gap:16px;align-items:center;justify-content:space-between;margin-bottom:18px}
+#os-mix-28 .stem-results-header h2{margin:0 0 4px;font-size:19px}
+#os-mix-28 .stem-list{display:grid;gap:10px}
+#os-mix-28 .stem-row{display:grid;grid-template-columns:100px minmax(0,1fr) auto;align-items:center;gap:18px;background:#202023;border:1px solid #303036;border-radius:12px;padding:12px 16px}
+#os-mix-28 .stem-row strong{font-size:14px}
+#os-mix-28 .stem-row audio{width:100%;height:36px}
+#os-mix-28 .stem-row a{color:#f1dfbb;text-decoration:none;font-size:13px}
+#os-mix-28 .stem-row a:hover{text-decoration:underline}
+#os-mix-28 .stem-error{color:#ffb3b6;font-size:14px;line-height:1.6;margin:16px 0}
+@media(max-width:650px){#os-mix-28 main.studio-shell-main.stem-page{padding:28px 18px 110px}#os-mix-28 .stem-row{grid-template-columns:1fr auto;gap:10px}#os-mix-28 .stem-row audio{grid-column:1/-1;grid-row:2}#os-mix-28 .stem-results-header{align-items:flex-start;flex-direction:column}}
