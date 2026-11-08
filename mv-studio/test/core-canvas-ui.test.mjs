@@ -61,6 +61,17 @@ test('reference image picker filters incompatible media even when loader ignores
  await panel.dialog.emit('click',button({rpToggleAsset:'img'}));await panel.dialog.emit('click',button({rpAction:'confirm-assets'}));assert.equal(selected.length,1);assert.equal(selected[0][0].type,'image');panel.destroy();
 });
 
+test('canvas assistant picker hides model choices while preserving an old project setting',async t=>{
+ env(t);
+ const project={id:'existing',studio:{selectedModel:{id:'old-model'}}},selected=[];
+ const panel=mountReferencePanels({read:()=>project,onAgent:item=>selected.push(item),onModel:()=>{throw Error('model selection must not be reachable');}},
+  {models:[{id:'new-model',name:'Visible model',category:'image',available:true}],agents:[{id:'director',name:'Creative assistant',category:'image',available:true}]},
+  {allowModelSelection:false});
+ panel.openModels();assert.match(panel.dialog.innerHTML,/Creative assistant/);assert.doesNotMatch(panel.dialog.innerHTML,/Visible model|data-rp-tab="models"/);
+ await panel.dialog.emit('click',button({rpTab:'models'}));assert.doesNotMatch(panel.dialog.innerHTML,/Visible model/);
+ await panel.dialog.emit('click',button({rpSelectModel:'director'}));assert.equal(selected[0].id,'director');assert.equal(project.studio.selectedModel.id,'old-model');panel.destroy();
+});
+
 test('failed reference selection preserves target for correction instead of losing its connection',async()=>{
  const fn=canvas.slice(canvas.indexOf('onSelectAssets:')+'onSelectAssets:'.length,canvas.indexOf(',onStyle:',canvas.indexOf('onSelectAssets:')));
  const context={referenceTarget:'target',doc:{nodes:[{id:'target'}]},selection:null,renderSelection(){},addMaterials:async()=>['image'],connectNodes:(doc,source,target)=>({...doc,edge:{source,target}}),commit:next=>context.doc=next};

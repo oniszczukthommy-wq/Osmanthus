@@ -44,7 +44,7 @@ const aliVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSC
 const aiPlanner=createMVPlanner({data:DATA,key,model,fetchImpl:textFetch});
 const aiMV=createAIMVWorkflow({data:DATA,planner:aiPlanner,video:aliVideo,audioPath,probe,ffmpeg:ff});
 const tasks=new Map();
-function capability(){return{kind:'local-ai-music-video-workspace',freeRender:fs.existsSync(ff)&&fs.existsSync(fp),deepseek:!!key,aliyunVideo:aliVideo.capabilities(),canvas:{image:imageModel.capabilities(),imageVideo:imageVideo.capabilities(),speech:speechModel.capabilities(),vision:canvasVision.capabilities(),asr:canvasAudio.capabilities(),editing:fs.existsSync(ff)&&fs.existsSync(fp),visualAnalysis:!!aliKey},asr:canvasAudio.capabilities().available,platformLinks:false,comfy:{available:false,reason:'当前视频使用阿里万相API。'},sample:fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))};}
+function capability(){return{kind:'local-ai-music-video-workspace',mvDirectorShotRetry:true,freeRender:fs.existsSync(ff)&&fs.existsSync(fp),deepseek:!!key,aliyunVideo:aliVideo.capabilities(),canvas:{image:imageModel.capabilities(),imageVideo:imageVideo.capabilities(),speech:speechModel.capabilities(),vision:canvasVision.capabilities(),asr:canvasAudio.capabilities(),editing:fs.existsSync(ff)&&fs.existsSync(fp),visualAnalysis:!!aliKey},asr:canvasAudio.capabilities().available,platformLinks:false,comfy:{available:false,reason:'当前视频使用阿里万相API。'},sample:fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))};}
 function audioPath(source){if(source.id!=='sample'&&!/^[a-f0-9-]{36}\.(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(source.id))throw Error('音频来源无效');const p=source.id==='sample'?path.join(PUBLIC,'assets/sample-song.mp3'):path.join(DATA,'uploads',source.id);let stat;try{stat=fs.lstatSync(p);}catch{throw Error('找不到原音频，请重新上传');}if(!stat.isFile()||stat.isSymbolicLink())throw Error('原音频文件无效，请重新上传');return p;}
 function probe(file){return mediaProcessing.probe(file);}
 function waveform(file){return mediaProcessing.waveform(file);}
@@ -235,9 +235,11 @@ export function createServer({media=mediaProcessing}={}){const {probe,waveform}=
   }
   if(method==='GET'&&route==='/api/mv-director')return send(200,{sessions:mvDirector.list()});
   if(method==='POST'&&route==='/api/mv-director/jobs')return send(202,{job:mvDirector.start(JSON.parse(await body(req)))});
-  if(method==='POST'&&route==='/api/mv-director/recover'){const {job_id}=JSON.parse(await body(req));return send(202,{job:mvDirector.recover(job_id)});}
+  if(method==='POST'&&route==='/api/mv-director/recover'){const {job_id,confirmed}=JSON.parse(await body(req));return send(202,{job:mvDirector.recover(job_id,{confirmed})});}
   const directorJob=route.match(/^\/api\/mv-director\/jobs\/([a-f0-9-]{36})$/);
   if(method==='GET'&&directorJob){const job=mvDirector.job(directorJob[1]);return job?send(200,{job}):send(404,{error:'找不到MV任务'});}
+  const directorRetryQuote=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/shot-retry-quote$/);
+  if(method==='GET'&&directorRetryQuote)return send(200,{estimate:mvDirector.retryQuote(directorRetryQuote[1],{failed_job_id:u.searchParams.get('job_id'),shot_id:u.searchParams.get('shot_id')})});
   const directorSession=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})(\/quote)?$/);
   if(method==='GET'&&directorSession){const session=mvDirector.get(directorSession[1]);if(!session)return send(404,{error:'找不到MV方案'});return send(200,directorSession[2]?{estimate:mvDirector.quote(session.id,u.searchParams.get('kind'))}:{session});}
   const directorLyrics=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/lyrics$/);
