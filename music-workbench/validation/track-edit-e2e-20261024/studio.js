@@ -308,6 +308,24 @@ if($('studio-volume'))$('studio-volume').oninput=e=>engine.transport.volume(e.ta
 new MutationObserver(()=>{const n=$('notice');n.hidden=!n.classList.contains('error')||statusIsTransient(n.textContent);}).observe($('notice'),{childList:true,subtree:true,characterData:true,attributes:true,attributeFilter:['class']});
 const songTitle=$('song-title');new MutationObserver(()=>{const title=displaySongTitle(songTitle.textContent);if(title!==songTitle.textContent)songTitle.textContent=title;}).observe(songTitle,{childList:true,subtree:true,characterData:true});songTitle.textContent=displaySongTitle(songTitle.textContent);
 window.osmanthusStudio={engine,api,openProject,openDetails,dialog,status,refresh,guarded,displaySongTitle,statusIsTransient,get page(){return page;},get batches(){return batches;},get drafts(){return drafts;},get library(){return library;},get artworks(){return artworks;},get creations(){return creations;}};
+
+// The currently running server may predate this optional module. Keep the
+// rest of the workbench usable until its static routes have been updated.
+fetch('/style-library.js',{cache:'no-store'}).then(response=>response.ok?import('./style-library.js'):null).then(module=>{
+ if(!module)return;
+ const stylesheet=document.createElement('link');stylesheet.rel='stylesheet';stylesheet.href='/style-library.css';document.head.append(stylesheet);
+ module.initStyleLibrary({root,icons,onSelect:style=>{
+  const field=$('studio-custom-style');if(!field)return;
+  const marker=/^【已选风格：[^】\r\n]{1,60}】[^\r\n]*$/;
+  const existing=field.value.split(/\r?\n/).filter(line=>!marker.test(line)).join('\n').trim();
+  const line=`【已选风格：${style.name}】${style.prompt}`;
+  const next=existing?`${existing}\n${line}`:line;
+  if(next.length>field.maxLength){status('已有风格描述接近长度上限，请先精简后再选择。',true);return;}
+  showCreate();setMode('advanced');field.value=next;
+  field.dispatchEvent(new Event('input',{bubbles:true}));
+  saveFormDraft();updateGenerateButton();field.focus();
+ }});
+}).catch(()=>{});
 const {initializeStudioPlayer,isPlaybackSpace}=await import('./studio-player.js');player=initializeStudioPlayer(window.osmanthusStudio,{getSongs:()=>library.filter(s=>!queueOmitted.has(s.id)),getSong:songMetadata,onDetails:(d,options)=>openDetails(d.project_id,options),onQueue:openQueue,onFavorite:d=>toggleFavorite(d.project_id),onShare:d=>guarded(()=>openShare(d.project_id,{original:d.source==='preview'})),onExport:d=>guarded(()=>downloadSong(d.project_id))});
 generationAutoplay=createGenerationAutoplay({play:(id,options)=>player.playSong(id,options),storage:localStorage,onBlocked:()=>{$('studio-create-status').textContent='音频已可试听，点播放即可边听边生成。';}});
 window.osmanthusStudio.generationAutoplay=generationAutoplay;

@@ -567,7 +567,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve(ROOT/'index.html')
         if path=='/assets/brand/osmanthus-logo.png':
             return self.serve(ROOT/'assets/brand/osmanthus-logo.png')
-        if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-inspiration.js','/studio-generation-autoplay.js','/studio-create.js','/studio-creation-request.js','/prompt-suggestions.js','/stem-split.js','/stem-split.css'):
+        if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-inspiration.js','/studio-generation-autoplay.js','/studio-create.js','/studio-creation-request.js','/prompt-suggestions.js','/stem-split.js','/stem-split.css','/style-library.js','/style-library.css'):
             return self.serve(ROOT/path[1:])
         if path in ('/','/app.js','/seek-control.js','/score.js','/vocals.js','/svc.js','/voice-library.js','/lyrics.js','/generation.js','/generation.css','/style.css','/interactions.css','/sections.js','/candidate_review.js'):
             return self.serve(ROOT/('index.html' if path=='/' else path[1:]))
