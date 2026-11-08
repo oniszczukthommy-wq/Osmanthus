@@ -1,0 +1,178 @@
+{
+  "chinese-pop": {
+    "title": "心跳的声音",
+    "artist": "Adeline Yeo (HP)",
+    "source": "https://freemusicarchive.org/music/adeline-yeo-hp/single/xintiaodeshengyin/",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "中文演唱，AI 人声",
+    "excerptStartSeconds": 35,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "feccb46c1fdaf8391132da354cadc60a665dbd9ac4f72411b7f94add184606e9"
+  },
+  "heartfelt-ballad": {
+    "title": "在你离开后",
+    "artist": "Adeline Yeo (HP)",
+    "source": "https://freemusicarchive.org/music/adeline-yeo-hp/single/zainilikaihou/",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "中文抒情演唱参考",
+    "excerptStartSeconds": 35,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "40cc74df74c89fb663e71ff0674c18485d9a077e08e116302e62eb40d56bb608"
+  },
+  "urban-folk": {
+    "title": "Clear Air",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100626",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "原声器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "781b1dfda95e9b7170e7dce00bf839db500fda474fa46db8bd1ba78179b4a9c6"
+  },
+  "chinese-rnb": {
+    "title": "Slow Jam",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1600015",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "R&B 器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "f7f0f6b1f22429a29fe025fedce031ab9ecaebdc0a158a620da2414ba4eb8cb7"
+  },
+  "city-pop": {
+    "title": "Chill Wave",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1600048",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "复古电子器乐参考，与 City Pop 有差异",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "475eb5ec7a05388cc2b909fe631144834559480bc2d3120c5236e5d5f65005a7"
+  },
+  "lofi": {
+    "title": "Dream Catcher",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1800019",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "Lo-fi 电子器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "d206f45969fa46db8bc415188779ba0c8441a87a1ef38a95675ef9a9bbabfb20"
+  },
+  "dream-pop": {
+    "title": "Dream Pop",
+    "artist": "HoliznaCC0",
+    "source": "https://freemusicarchive.org/music/holiznacc0/only-in-the-milky-way-part-3/dream-pop/",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "note": "氛围器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "70719b2dd796b824a06c0a08d02fa17e08f62e3f79c9128e5dab9f7a46598af9"
+  },
+  "pop-rock": {
+    "title": "Americana",
+    "artist": "HoliznaCC0",
+    "source": "https://freemusicarchive.org/music/holiznacc0/rock-montage/americana-1/",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "note": "流行摇滚器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "2bbb96a4f0ab44f2ae51605a37f43227ace973dd4067e445d817e87c64ebfe2c"
+  },
+  "indie-pop": {
+    "title": "Paper Mate",
+    "artist": "HoliznaCC0",
+    "source": "https://freemusicarchive.org/music/holiznacc0/washed-up/paper-mate/",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "note": "独立流行参考，含英文演唱",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "664bc25581c6589c90a9f47161c21394ea5f513029f4f49eec8aa08fd19b8a1d"
+  },
+  "chinese-style": {
+    "title": "Shenyang",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1600066",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "东方传统器乐参考，现代编曲有所不同",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "077a5702bcb89ec8c8a503cca66bad6bd58450bf3a38006e145997a824c12bd7"
+  },
+  "electronic-dance": {
+    "title": "Dance Robot ACTIVATE",
+    "artist": "Loyalty Freak Music",
+    "source": "https://freemusicarchive.org/music/Loyalty_Freak_Music/ROLLER_DISCO_DANCE_DANCE/Loyalty_Freak_Music_-_ROLLER_DISCO_DANCE_DANCE_-_02_Dance_Robot_ACTIVATE/",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "note": "电子舞曲器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "bb879b709c76b04105553012a6474e3d62f057d711b961a497feb4cdc161724a"
+  },
+  "jazz-lounge": {
+    "title": "Long Stroll",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100174",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "爵士器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "49941bb23626cfa2fda0a5eecdf4b3311f4b95466c807e4edc82d136e4cb1ac4"
+  },
+  "cinematic": {
+    "title": "Eternal Hope",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100238",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "电影配乐器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "96d9e6cd8e1a8c45f6519398f00ba6fcb246695a496451bb4ab31525bf303e1f"
+  },
+  "bright-acoustic": {
+    "title": "Happy Alley",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100482",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "原声器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "770d885a6e0b28b836fc1826f39de78e0bb7486d8c24e72cf2d42623e90d733a"
+  },
+  "synth-pop": {
+    "title": "Newer Wave",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN2000024",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "复古合成器器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "bba0a8bd4f2f16a0aaf09d410c449c2000f77b6e6a395fbc932eacd3d61a0f21"
+  },
+  "gentle-piano": {
+    "title": "Meditation Impromptu 01",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100163",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "钢琴器乐参考",
+    "excerptStartSeconds": 15,
+    "changes": "节选、淡入淡出、音量调整及重新编码",
+    "sha256": "9166f65ec639485e17f77320f2427a0f5fef511ca8c8488889826b5279a8444e"
+  }
+}

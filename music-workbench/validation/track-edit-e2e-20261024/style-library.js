@@ -18,6 +18,137 @@ export const STYLE_LIBRARY = [
   {id:'gentle-piano',name:'静谧钢琴',category:'治愈',description:'留白与细节，温柔的情绪',tags:['钢琴','安静'],prompt:'安静抒情，以细腻钢琴为主体，少量柔和弦乐与环境氛围，留出呼吸和空间，缓慢旋律逐渐展开，情感真诚克制。'}
 ];
 
+// Each excerpt keeps its original credit and licence alongside the player.
+const PREVIEW_CREDITS = {
+  "chinese-pop": {
+    "title": "心跳的声音",
+    "artist": "Adeline Yeo (HP)",
+    "source": "https://freemusicarchive.org/music/adeline-yeo-hp/single/xintiaodeshengyin/",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "中文演唱，AI 人声"
+  },
+  "heartfelt-ballad": {
+    "title": "在你离开后",
+    "artist": "Adeline Yeo (HP)",
+    "source": "https://freemusicarchive.org/music/adeline-yeo-hp/single/zainilikaihou/",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "中文抒情演唱参考"
+  },
+  "urban-folk": {
+    "title": "Clear Air",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100626",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "原声器乐参考"
+  },
+  "chinese-rnb": {
+    "title": "Slow Jam",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1600015",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "R&B 器乐参考"
+  },
+  "city-pop": {
+    "title": "Chill Wave",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1600048",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "复古电子器乐参考，与 City Pop 有差异"
+  },
+  "lofi": {
+    "title": "Dream Catcher",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1800019",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "Lo-fi 电子器乐参考"
+  },
+  "dream-pop": {
+    "title": "Dream Pop",
+    "artist": "HoliznaCC0",
+    "source": "https://freemusicarchive.org/music/holiznacc0/only-in-the-milky-way-part-3/dream-pop/",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "note": "氛围器乐参考"
+  },
+  "pop-rock": {
+    "title": "Americana",
+    "artist": "HoliznaCC0",
+    "source": "https://freemusicarchive.org/music/holiznacc0/rock-montage/americana-1/",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "note": "流行摇滚器乐参考"
+  },
+  "indie-pop": {
+    "title": "Paper Mate",
+    "artist": "HoliznaCC0",
+    "source": "https://freemusicarchive.org/music/holiznacc0/washed-up/paper-mate/",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "note": "独立流行参考，含英文演唱"
+  },
+  "chinese-style": {
+    "title": "Shenyang",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1600066",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "东方传统器乐参考，现代编曲有所不同"
+  },
+  "electronic-dance": {
+    "title": "Dance Robot ACTIVATE",
+    "artist": "Loyalty Freak Music",
+    "source": "https://freemusicarchive.org/music/Loyalty_Freak_Music/ROLLER_DISCO_DANCE_DANCE/Loyalty_Freak_Music_-_ROLLER_DISCO_DANCE_DANCE_-_02_Dance_Robot_ACTIVATE/",
+    "license": "CC0 1.0",
+    "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+    "note": "电子舞曲器乐参考"
+  },
+  "jazz-lounge": {
+    "title": "Long Stroll",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100174",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "爵士器乐参考"
+  },
+  "cinematic": {
+    "title": "Eternal Hope",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100238",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "电影配乐器乐参考"
+  },
+  "bright-acoustic": {
+    "title": "Happy Alley",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100482",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "原声器乐参考"
+  },
+  "synth-pop": {
+    "title": "Newer Wave",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN2000024",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "复古合成器器乐参考"
+  },
+  "gentle-piano": {
+    "title": "Meditation Impromptu 01",
+    "artist": "Kevin MacLeod",
+    "source": "https://incompetech.com/music/royalty-free/index.html?isrc=USUAN1100163",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0/",
+    "note": "钢琴器乐参考"
+  }
+};
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const CATEGORIES = ['全部','流行','治愈','节奏','氛围'];
 
@@ -27,7 +158,7 @@ export function initStyleLibrary({root,onSelect,icons,onPreviewPlay,styles=STYLE
   if (!home || !hero || typeof onSelect !== 'function') return null;
   const existing=home.querySelector('[data-style-library]');if(existing) return existing;
   const section=document.createElement('section');section.className='style-library';section.dataset.styleLibrary='';section.setAttribute('aria-label','风格推荐');
-  section.innerHTML=`<div class="style-library-heading"><div><h2>发现你的音乐风格</h2><p>从一个喜欢的方向开始，选用后还可以继续修改。</p></div></div><div class="style-library-filters" role="group" aria-label="筛选音乐风格">${CATEGORIES.map((category,i)=>`<button type="button" class="style-library-filter" data-style-filter="${escapeHtml(category)}" aria-pressed="${i===0}">${escapeHtml(category)}</button>`).join('')}</div><div class="style-library-grid"></div>`;
+  section.innerHTML=`<div class="style-library-heading"><div><h2>发现你的音乐风格</h2><p>试听是风格参考，选用后可以继续修改。</p></div></div><div class="style-library-filters" role="group" aria-label="筛选音乐风格">${CATEGORIES.map((category,i)=>`<button type="button" class="style-library-filter" data-style-filter="${escapeHtml(category)}" aria-pressed="${i===0}">${escapeHtml(category)}</button>`).join('')}</div><div class="style-library-grid"></div>`;
   hero.insertAdjacentElement('afterend',section);
   const grid=section.querySelector('.style-library-grid');let selectedCategory='全部';
   // The main player can call this when a song starts. Keep the mounted
@@ -41,7 +172,9 @@ export function initStyleLibrary({root,onSelect,icons,onPreviewPlay,styles=STYLE
       let preview='';
       if(style.previewUrl){try{const url=new URL(style.previewUrl,location.href);if(url.origin===location.origin&&/^https?:$/.test(url.protocol))preview=url.href;}catch{}}
       const tags=Array.isArray(style.tags)?style.tags.slice(0,2):[];
-      const sample=preview?`<audio class="style-library-audio" controls preload="none" src="${escapeHtml(preview)}" aria-label="试听${escapeHtml(style.name)}"></audio>`:'<p class="style-library-pending"><span aria-hidden="true">♫</span> 试听音频待补充</p>';
+      const credit=PREVIEW_CREDITS[style.id];
+      const info=credit?`<p class="style-library-preview-note">${escapeHtml(credit.note)}</p><details class="style-library-credit"><summary>样曲信息</summary><p>${escapeHtml(credit.title)} · ${escapeHtml(credit.artist)}<br><a href="${escapeHtml(credit.source)}" target="_blank" rel="noopener noreferrer">原曲来源</a> · <a href="${escapeHtml(credit.licenseUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(credit.license)}</a> · 已截取、调整音量</p></details>`:'';
+      const sample=preview?`<audio class="style-library-audio" controls preload="none" src="${escapeHtml(preview)}" aria-label="试听${escapeHtml(style.name)}"></audio>${info}`:'<p class="style-library-pending"><span aria-hidden="true">♫</span> 试听音频待补充</p>';
       return `<article class="style-library-card"><div class="style-library-art style-art-${index%6}" aria-hidden="true"><span class="style-library-art-index">${String(index+1).padStart(2,'0')}</span><span class="style-library-art-symbol">${['◒','◍','◌','◉','◐','◔'][index%6]}</span><span class="style-library-art-lines"></span></div><div class="style-library-card-body"><div class="style-library-card-top"><h3>${escapeHtml(style.name)}</h3><span class="style-library-category">${escapeHtml(style.category)}</span></div><p class="style-library-description">${escapeHtml(style.description)}</p><div class="style-library-tags">${tags.map(tag=>`<span>${escapeHtml(tag)}</span>`).join('')}</div>${sample}<button type="button" class="style-library-use" data-style-use="${escapeHtml(style.id)}" aria-label="选用${escapeHtml(style.name)}风格"><span>选用风格</span><span aria-hidden="true">↗</span></button></div></article>`;
     }).join('');
     grid.querySelectorAll('audio').forEach(audio=>audio.addEventListener('play',()=>{grid.querySelectorAll('audio').forEach(other=>{if(other!==audio)other.pause();});onPreviewPlay?.(audio);}));
