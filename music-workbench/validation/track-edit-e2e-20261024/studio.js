@@ -25,7 +25,8 @@ const api=async(path,body)=>{
  return data;
 };
 let page='home',library=[],batches=[],drafts=[],artworks=[],creations=[],player=null,polling=false,creating=false,mode='simple',activeBatchId=null,activeCreationId=null,detailId=null,navigation=0,pendingEditor=null,query='',sort='new',lastLibrary='',lastProject='',lastSelection='',lastSections='',lastHistory='',lastLine=-1;
-let instrumental=false,generationAutoplay=null;
+let instrumental=false,generationAutoplay=null,styleLibrary=null,startingStylePreview=false;
+function pauseStylePreview(){styleLibrary?.pausePreview?.();}
 let shareSerial=0,lyricsRequest=null,lyricsBaseline='',lyricsRequestToken=0,creationFormError=null;
 const queueOmitted=new Set(),resumingBatches=new Set();
 const creationRecovery=createCreationRequestRecovery({api,storage:localStorage,onAccepted:acceptCreationFlow,onChange:renderPendingCreation});
@@ -35,7 +36,7 @@ function status(text,error=false){const node=$('studio-global-status');if(node){
 async function guarded(fn,scope=null){try{return await fn();}catch(e){if(scope==='creation')creationFormError=e.message;status(e.message,true);return null;}}
 function clearCreationFormError(){if(!creationFormError)return;for(const id of ['studio-global-status','studio-dialog-status']){const node=$(id);if(node?.textContent===creationFormError){node.textContent='';node.hidden=true;node.classList.remove('error');}}creationFormError=null;}
 function closeDrawers(){all('.studio-drawer').forEach(e=>e.hidden=true);for(const key of ['queue','details-toggle'])q('#studio-player [data-player="'+key+'"]')?.setAttribute('aria-expanded','false');root.classList.remove('has-detail-drawer','has-queue-drawer');}
-function navigate(next,{keepPending=false}={}){status('',false);creationFormError=null;navigation++;if(!keepPending)pendingEditor=null;page=next;closeDrawers();$('studio-dialog')?.close();root.classList.remove('is-home','is-library','is-create','is-editor','is-detail','is-stems');root.classList.add('is-'+next);const home=next==='home'||next==='library';q('[data-studio-home]').hidden=!home;q('[data-studio-create]').hidden=next!=='create';q('[data-studio-editor]').hidden=next!=='editor';const stems=q('[data-studio-stems]');if(stems)stems.hidden=next!=='stems';const detail=q('[data-studio-detail]');if(detail)detail.hidden=next!=='detail';q('.rs-hero').hidden=next==='library';q('.tl-library').hidden=next!=='library';all('[data-studio-nav]').forEach(b=>{b.setAttribute('aria-current',b.dataset.studioNav===next?'page':'false');b.setAttribute('aria-pressed',String(b.dataset.studioNav===next));});window.scrollTo({top:0,behavior:'instant'});}
+function navigate(next,{keepPending=false}={}){if(next!=='home')pauseStylePreview();status('',false);creationFormError=null;navigation++;if(!keepPending)pendingEditor=null;page=next;closeDrawers();$('studio-dialog')?.close();root.classList.remove('is-home','is-library','is-create','is-editor','is-detail','is-stems');root.classList.add('is-'+next);const home=next==='home'||next==='library';q('[data-studio-home]').hidden=!home;q('[data-studio-create]').hidden=next!=='create';q('[data-studio-editor]').hidden=next!=='editor';const stems=q('[data-studio-stems]');if(stems)stems.hidden=next!=='stems';const detail=q('[data-studio-detail]');if(detail)detail.hidden=next!=='detail';q('.rs-hero').hidden=next==='library';q('.tl-library').hidden=next!=='library';all('[data-studio-nav]').forEach(b=>{b.setAttribute('aria-current',b.dataset.studioNav===next?'page':'false');b.setAttribute('aria-pressed',String(b.dataset.studioNav===next));});window.scrollTo({top:0,behavior:'instant'});}
 function home(libraryOnly=false){navigate(libraryOnly?'library':'home');if(!libraryOnly)q('.tl-library').hidden=true;renderLibrary();}
 function showCreate(){navigate('create');setMode(mode);renderBatches();}
 function setMode(next){if(next==='advanced'&&mode==='simple'&&!$('studio-custom-style').value.trim())$('studio-custom-style').value=$('studio-simple-prompt').value;mode=next==='advanced'?'advanced':'simple';all('[data-create-mode]').forEach(b=>{b.setAttribute('aria-selected',String(b.dataset.createMode===mode));b.classList.toggle('is-active',b.dataset.createMode===mode);});const simple=q('[data-create-simple]'),advanced=q('[data-create-advanced]');if(simple)simple.hidden=mode!=='simple';if(advanced)advanced.hidden=mode!=='advanced';updateGenerateButton();}
@@ -314,10 +315,18 @@ window.osmanthusStudio={engine,api,openProject,openDetails,dialog,status,refresh
 fetch('/style-library.js',{cache:'no-store'}).then(response=>response.ok?import('./style-library.js'):null).then(module=>{
  if(!module)return;
  const stylesheet=document.createElement('link');stylesheet.rel='stylesheet';stylesheet.href='/style-library.css';document.head.append(stylesheet);
- module.initStyleLibrary({root,icons,onSelect:style=>{
+ const originalPresets=module.STYLE_LIBRARY.map(style=>`【已选风格：${style.name}】${style.prompt}`);
+ styleLibrary=module.initStyleLibrary({root,icons,onPreviewPlay:()=>{
+  startingStylePreview=true;
+  try{generationAutoplay?.cancel();player?.pause();window.pauseGenerationPreview?.();window.pauseScorePreview?.();window.pauseVocalPreview?.();window.pauseVoiceLibraryPreview?.();}
+  finally{startingStylePreview=false;}
+ },onSelect:style=>{
   const field=$('studio-custom-style');if(!field)return;
-  const marker=/^【已选风格：[^】\r\n]{1,60}】[^\r\n]*$/;
-  const existing=field.value.split(/\r?\n/).filter(line=>!marker.test(line)).join('\n').trim();
+  // Strip an intact old preset, preserving additions; if its contents were edited, keep the line.
+  const existing=field.value.split(/\r?\n/).map(line=>{
+   const preset=originalPresets.find(value=>line.startsWith(value));
+   return preset?line.slice(preset.length).replace(/^[\s，,、；;。]+/u,''):line;
+  }).filter(Boolean).join('\n').trim();
   const line=`【已选风格：${style.name}】${style.prompt}`;
   const next=existing?`${existing}\n${line}`:line;
   if(next.length>field.maxLength){status('已有风格描述接近长度上限，请先精简后再选择。',true);return;}
@@ -327,14 +336,14 @@ fetch('/style-library.js',{cache:'no-store'}).then(response=>response.ok?import(
  }});
 }).catch(()=>{});
 const {initializeStudioPlayer,isPlaybackSpace}=await import('./studio-player.js');player=initializeStudioPlayer(window.osmanthusStudio,{getSongs:()=>library.filter(s=>!queueOmitted.has(s.id)),getSong:songMetadata,onDetails:(d,options)=>openDetails(d.project_id,options),onQueue:openQueue,onFavorite:d=>toggleFavorite(d.project_id),onShare:d=>guarded(()=>openShare(d.project_id,{original:d.source==='preview'})),onExport:d=>guarded(()=>downloadSong(d.project_id))});
-generationAutoplay=createGenerationAutoplay({play:(id,options)=>player.playSong(id,options),storage:localStorage,onBlocked:()=>{$('studio-create-status').textContent='音频已可试听，点播放即可边听边生成。';}});
+generationAutoplay=createGenerationAutoplay({play:(id,options)=>{pauseStylePreview();return player.playSong(id,options);},storage:localStorage,onBlocked:()=>{$('studio-create-status').textContent='音频已可试听，点播放即可边听边生成。';}});
 window.osmanthusStudio.generationAutoplay=generationAutoplay;
-root.addEventListener('osmanthus:manual-playback',()=>generationAutoplay.cancel());
+root.addEventListener('osmanthus:manual-playback',()=>{generationAutoplay.cancel();if(!startingStylePreview)pauseStylePreview();});
 document.addEventListener('keydown',event=>{if(isPlaybackSpace(event,{modalOpen:!!document.querySelector('dialog[open]')}))generationAutoplay.cancel();},true);
-root.addEventListener('click',event=>{if(event.target.closest('[data-song-play],[data-project-open],[data-player="play"],[data-player="previous"],[data-player="next"],[data-player="cancel-loading"],#play,#stop,#play-selection'))generationAutoplay.cancel();
+root.addEventListener('click',event=>{if(event.target.closest('[data-song-play],[data-project-open],[data-player="play"],[data-player="previous"],[data-player="next"],[data-player="cancel-loading"],#play,#stop,#play-selection')){generationAutoplay.cancel();pauseStylePreview();}
  if(event.target.closest('#studio-confirm-lyrics,#studio-generate-song'))void engine.transport.unlock?.().catch(()=>{});},true);
-document.addEventListener('play',event=>{if(event.target?.dataset?.candidate){window.pauseScorePreview?.();window.pauseVocalPreview?.();window.pauseVoiceLibraryPreview?.();}},true);
-root.addEventListener('osmanthus:playback',event=>{applyPlaybackState(event.detail);icons();});
+document.addEventListener('play',event=>{if(!styleLibrary?.contains(event.target))pauseStylePreview();if(event.target?.dataset?.candidate){window.pauseScorePreview?.();window.pauseVocalPreview?.();window.pauseVoiceLibraryPreview?.();}},true);
+root.addEventListener('osmanthus:playback',event=>{if(event.detail?.playing&&!startingStylePreview)pauseStylePreview();applyPlaybackState(event.detail);icons();});
 const librarySort=document.createElement('select');librarySort.setAttribute('aria-label','作品排序');librarySort.innerHTML='<option value="new">最新</option><option value="old">最早</option><option value="favorite">已喜欢</option>';q('.tl-toolbar').append(librarySort);librarySort.onchange=()=>{sort=librarySort.value;lastLibrary='';renderLibrary();};
 const {initializeInspiration}=await import('./studio-inspiration.js');initializeInspiration({root,api,onIdea:idea=>{$('studio-simple-prompt').value=idea;saveFormDraft();updateGenerateButton();}});
 const {initializeSpeech}=await import('./studio-speech.js');initializeSpeech(window.osmanthusStudio);
