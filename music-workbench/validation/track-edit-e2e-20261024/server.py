@@ -33,6 +33,8 @@ from vocals import Vocals,PRESETS
 from voice_library import VoiceLibrary
 from lyrics import Lyrics
 from inspiration import generate as generate_inspiration
+from style_optimizer import optimize as optimize_style
+from style_previews import available_style_previews, style_preview_file
 from svc import Conversions
 from sections import Sections, resolve_reference
 from score_review import ScoreReviews
@@ -567,6 +569,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve(ROOT/'index.html')
         if path=='/assets/brand/osmanthus-logo.png':
             return self.serve(ROOT/'assets/brand/osmanthus-logo.png')
+        if path=='/api/style-previews':return self.json(200,{'ids':available_style_previews(ROOT)})
+        match=re.fullmatch(r'/style-previews/([a-z0-9-]+)\.mp3',path)
+        if match:
+            try:return self.serve(style_preview_file(ROOT,match[1]))
+            except ValueError:return self.json(404,{'error':'文件不存在'})
         if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-inspiration.js','/studio-generation-autoplay.js','/studio-create.js','/studio-creation-request.js','/prompt-suggestions.js','/stem-split.js','/stem-split.css','/style-library.js','/style-library.css'):
             return self.serve(ROOT/path[1:])
         if path in ('/','/app.js','/seek-control.js','/score.js','/vocals.js','/svc.js','/voice-library.js','/lyrics.js','/generation.js','/generation.css','/style.css','/interactions.css','/sections.js','/candidate_review.js'):
@@ -673,6 +680,7 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get('instrumental') is not True and body.get('request_id') not in CREATE_FLOW.requests:raise ValueError('请先展示并确认歌词，再生成歌曲；请刷新页面使用新的创作流程')
                 return self.json(202,CREATE_FLOW.start(body))
             if path=='/api/creation/inspiration':return self.json(200,generate_inspiration(body))
+            if path=='/api/creation/optimize-style':return self.json(200,optimize_style(body))
             if path=='/api/creation/lyrics':return self.json(202,CREATE_FLOW.write_lyrics(body))
             match=re.fullmatch(r'/api/creation/jobs/([a-f0-9-]+)/resume',path)
             if match:return self.json(202,CREATE_FLOW.resume(match[1]))

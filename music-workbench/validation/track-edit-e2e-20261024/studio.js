@@ -25,7 +25,7 @@ const api=async(path,body)=>{
  return data;
 };
 let page='home',library=[],batches=[],drafts=[],artworks=[],creations=[],player=null,polling=false,creating=false,mode='simple',activeBatchId=null,activeCreationId=null,detailId=null,navigation=0,pendingEditor=null,query='',sort='new',lastLibrary='',lastProject='',lastSelection='',lastSections='',lastHistory='',lastLine=-1;
-let instrumental=false,generationAutoplay=null,styleLibrary=null,startingStylePreview=false;
+let instrumental=false,generationAutoplay=null,styleLibrary=null,startingStylePreview=false,styleOptimizationRevision=0;
 function pauseStylePreview(){styleLibrary?.pausePreview?.();}
 let shareSerial=0,lyricsRequest=null,lyricsBaseline='',lyricsRequestToken=0,creationFormError=null;
 const queueOmitted=new Set(),resumingBatches=new Set();
@@ -39,7 +39,7 @@ function closeDrawers(){all('.studio-drawer').forEach(e=>e.hidden=true);for(cons
 function navigate(next,{keepPending=false}={}){if(next!=='home')pauseStylePreview();status('',false);creationFormError=null;navigation++;if(!keepPending)pendingEditor=null;page=next;closeDrawers();$('studio-dialog')?.close();root.classList.remove('is-home','is-library','is-create','is-editor','is-detail','is-stems');root.classList.add('is-'+next);const home=next==='home'||next==='library';q('[data-studio-home]').hidden=!home;q('[data-studio-create]').hidden=next!=='create';q('[data-studio-editor]').hidden=next!=='editor';const stems=q('[data-studio-stems]');if(stems)stems.hidden=next!=='stems';const detail=q('[data-studio-detail]');if(detail)detail.hidden=next!=='detail';q('.rs-hero').hidden=next==='library';q('.tl-library').hidden=next!=='library';all('[data-studio-nav]').forEach(b=>{b.setAttribute('aria-current',b.dataset.studioNav===next?'page':'false');b.setAttribute('aria-pressed',String(b.dataset.studioNav===next));});window.scrollTo({top:0,behavior:'instant'});}
 function home(libraryOnly=false){navigate(libraryOnly?'library':'home');if(!libraryOnly)q('.tl-library').hidden=true;renderLibrary();}
 function showCreate(){navigate('create');setMode(mode);renderBatches();}
-function setMode(next){if(next==='advanced'&&mode==='simple'&&!$('studio-custom-style').value.trim())$('studio-custom-style').value=$('studio-simple-prompt').value;mode=next==='advanced'?'advanced':'simple';all('[data-create-mode]').forEach(b=>{b.setAttribute('aria-selected',String(b.dataset.createMode===mode));b.classList.toggle('is-active',b.dataset.createMode===mode);});const simple=q('[data-create-simple]'),advanced=q('[data-create-advanced]');if(simple)simple.hidden=mode!=='simple';if(advanced)advanced.hidden=mode!=='advanced';updateGenerateButton();}
+function setMode(next){const nextMode=next==='advanced'?'advanced':'simple';if(nextMode!==mode)styleOptimizationRevision++;if(nextMode==='advanced'&&mode==='simple'&&!$('studio-custom-style').value.trim())$('studio-custom-style').value=$('studio-simple-prompt').value;mode=nextMode;all('[data-create-mode]').forEach(b=>{b.setAttribute('aria-selected',String(b.dataset.createMode===mode));b.classList.toggle('is-active',b.dataset.createMode===mode);});const simple=q('[data-create-simple]'),advanced=q('[data-create-advanced]');if(simple)simple.hidden=mode!=='simple';if(advanced)advanced.hidden=mode!=='advanced';updateGenerateButton();}
 function songMetadata(id){const song=library.find(s=>s.id===id)||batches.flatMap(b=>b.candidates.map(c=>({...c,lyrics:b.lyrics,style:b.style,voice:b.voice,instrumental:!!b.instrumental,batch_id:b.id}))).find(s=>s.id===id)||null;return song?{...song,favorite:favorites.has(id),cover_url:song.cover_url||artworks.find(a=>a.project_id===id&&a.stage==='ready')?.cover_url||null}:null;}
 function songCover(song){return song?.cover_url?`<img src="${esc(song.cover_url)}" alt="${esc(displaySongTitle(song.title))}的封面" loading="lazy">`:'<i data-lucide="music-2" aria-hidden="true"></i>';}
 function applyFavoriteState(){for(const b of all('[data-song-favorite]')){const active=favorites.has(b.dataset.songFavorite);b.setAttribute('aria-pressed',String(active));b.setAttribute('aria-label',(active?'取消喜欢':'喜欢')+(songMetadata(b.dataset.songFavorite)?.title||'歌曲'));}}
@@ -69,7 +69,7 @@ function renderBatches(){const shown=[...batches,...creations.filter(c=>!c.batch
  }}renderWorkspaceLegacy();orderWorkspace();filterWorkspace();applyFavoriteState();applyPlaybackState(player?.state);const holder=$('studio-batches');holder.classList.toggle('is-empty',!shown.length&&!library.length);const empty=q('[data-create-results-empty]');if(empty)empty.hidden=!!library.length||shown.some(b=>!activeBatchId||b.id===activeBatchId);icons();}
 async function refresh(){if(polling)return;polling=true;try{const [br,jr,ar,cr,dr]=await Promise.all([api('/api/generation/batches'),api('/api/generation/jobs'),api('/api/artwork/jobs').catch(()=>({jobs:[]})),api('/api/creation/jobs').catch(()=>({jobs:[]})),api('/api/generation/drafts')]);batches=br.batches;artworks=ar.jobs||[];creations=cr.requests||cr.jobs||[];drafts=dr.drafts||[];if(typeof renderReviewRecovery==='function')renderReviewRecovery();const activeDraft=drafts.find(d=>d.id===lyricDraftId);if(activeDraft&&$('studio-dialog')?.open&&$('studio-lyric-approval')&&!$('studio-lyric-approval').hidden&&!draftConfirming)showDraftReview(activeDraft);const candidates=batches.flatMap(b=>b.candidates.map(c=>({...c,batch_id:b.id,lyrics:b.lyrics,style:b.style,voice:b.voice,instrumental:!!b.instrumental})));const songs=jr.jobs.filter(j=>j.download_ready||j.project_ready).map(j=>({...j,...candidates.find(c=>c.id===j.id),duration:j.duration_seconds}));const current=engine.getProject();if(current&&!current.empty){let i=songs.findIndex(s=>s.id===current.id);const item={...(songs[i]||{}),...current,project_ready:true};if(i>=0)songs[i]=item;else songs.unshift(item);}library=songs.map(s=>({...s,title:displaySongTitle(s.title),cover_url:artworks.find(a=>a.project_id===s.id&&a.stage==='ready')?.cover_url||null,favorite:favorites.has(s.id),media:s.media||{complete:s.download_ready?`/api/generation/media/${s.id}/complete`:null}}));for(const song of library)player?.registerPreviewSong?.(song);renderLibrary();renderBatches();if(activeDraft&&!activeCreationId){if(activeDraft.batch_id)activeBatchId=activeDraft.batch_id;const currentBatch=batches.find(b=>b.id===activeDraft.batch_id);$('studio-create-status').textContent=activeDraft.stage==='ready'?'':activeDraft.stage==='confirmed'&&currentBatch?creationProgress(currentBatch):draftProgress(activeDraft);}const flow=creations.find(c=>c.id===activeCreationId);if(flow){activeBatchId=flow.batch_id;const n=$('studio-create-status');n.textContent=creationProgress(flow);if(flow.error)n.classList.add('error');else n.classList.remove('error');}if(detailId)renderDetail(false);void generationAutoplay?.observe(batches);if(pendingEditor&&pendingEditor.epoch===navigation&&library.find(s=>s.id===pendingEditor.id)?.project_ready){const request=pendingEditor;pendingEditor=null;await activateEditor(request.id,request.epoch);}}catch(e){status(e.message,true);}finally{polling=false;}}
 function creationBody(){const prompt=$('studio-simple-prompt').value.trim();if(instrumental){const brief=(mode==='advanced'?$('studio-custom-style').value.trim():prompt)||prompt;if(brief.length<3)throw Error('请描述至少3个字的纯音乐风格或创作想法。');return{mode,instrumental:true,prompt:brief,style:mode==='advanced'?$('studio-custom-style').value.trim()||'流行器乐':'流行器乐',...($('studio-custom-title').value.trim()?{title:$('studio-custom-title').value.trim()}:{})};}if(mode==='simple'){if(prompt.length<3)throw Error('创作描述至少需要3个字。');return{mode:'simple',prompt};}const lyrics=$('studio-custom-lyrics').value.trim();if(!lyrics)throw Error('请填写歌词，或使用 AI 写词后再生成。');return{mode:'advanced',prompt:prompt||'根据歌词创作歌曲',lyrics,style:$('studio-custom-style').value.trim()||'中文流行',voice:$('studio-custom-voice').value.trim(),title:$('studio-custom-title').value.trim()};}
-function setInstrumental(value){instrumental=!!value;root.classList.toggle('is-instrumental-create',instrumental);all('[data-instrumental-toggle]').forEach(b=>b.setAttribute('aria-checked',String(instrumental)));const examples=instrumental?instrumentalExamples:songExamples;homeSuggestions.setExamples(examples,instrumental?'描述纯音乐的风格、情绪与配器…':'描述你想创作的歌曲');createSuggestions.setExamples(examples,instrumental?'描述纯音乐的风格、情绪与配器…':'描述你想创作的歌曲：主题、情绪、风格和声音…');updateGenerateButton();}
+function setInstrumental(value){if(instrumental!==!!value)styleOptimizationRevision++;instrumental=!!value;root.classList.toggle('is-instrumental-create',instrumental);all('[data-instrumental-toggle]').forEach(b=>b.setAttribute('aria-checked',String(instrumental)));const examples=instrumental?instrumentalExamples:songExamples;homeSuggestions.setExamples(examples,instrumental?'描述纯音乐的风格、情绪与配器…':'描述你想创作的歌曲');createSuggestions.setExamples(examples,instrumental?'描述纯音乐的风格、情绪与配器…':'描述你想创作的歌曲：主题、情绪、风格和声音…');updateGenerateButton();}
 function acceptCreationFlow(flow){
  activeCreationId=flow.id;activeBatchId=flow.batch_id;generationAutoplay?.arm(flow.batch_id);
  const i=creations.findIndex(c=>c.id===flow.id);if(i>=0)creations[i]=flow;else creations.unshift(flow);
@@ -282,6 +282,33 @@ const formDraft=createBrowserDraft({storage:localStorage,session:tabStorage,key:
 const restoredForm=formDraft.load();
 if(restoredForm){for(const [id,max] of Object.entries(draftFields))if($(id)&&typeof restoredForm[id]==='string'&&restoredForm[id].length<=max)$(id).value=restoredForm[id];mode=restoredForm.mode==='advanced'?'advanced':'simple';setMode(mode);setInstrumental(restoredForm.instrumental===true);}
 function saveFormDraft(){const value={mode,instrumental};for(const id of Object.keys(draftFields))if($(id))value[id]=$(id).value;formDraft.save(value);}
+// An optimization is advisory: it never touches the lyrics and a stale result
+// must not overwrite changes made while the request is in flight.
+function initStyleOptimization(){
+ const field=$('studio-custom-style');if(!field)return;
+ const button=document.createElement('button');button.type='button';button.id='studio-optimize-style';button.className='studio-optimize-style';button.textContent='优化风格';
+ const message=document.createElement('p');message.className='studio-style-optimize-status';message.setAttribute('role','status');message.setAttribute('aria-live','polite');message.hidden=true;
+ field.after(button,message);
+ field.addEventListener('input',()=>{styleOptimizationRevision++;});
+ button.addEventListener('click',async()=>{
+  if(button.disabled)return;
+  const before=field.value,style=before.trim(),epoch=navigation,revision=styleOptimizationRevision,wasInstrumental=instrumental,wasMode=mode;
+  message.hidden=false;message.classList.remove('error');
+  if(!style){message.textContent='请先填写或选用一种风格。';return;}
+  button.disabled=true;button.setAttribute('aria-busy','true');message.textContent='正在优化风格描述…';
+  try{
+   const result=await api('/api/creation/optimize-style',{style,instrumental:wasInstrumental});
+   if(typeof result?.style!=='string'||!result.style.trim()||result.style.trim().length>field.maxLength)throw Error('返回内容不可用，请稍后重试。');
+   if(navigation!==epoch||styleOptimizationRevision!==revision||field.value!==before||instrumental!==wasInstrumental||mode!==wasMode){
+    message.textContent='优化期间内容或页面已变化，已保留你当前的内容。';return;
+   }
+   field.value=result.style.trim();field.dispatchEvent(new Event('input',{bubbles:true}));saveFormDraft();
+   message.textContent='风格描述已优化，可继续修改。';
+  }catch(error){message.textContent='风格优化失败：'+(error?.message||'请稍后重试。');message.classList.add('error');}
+  finally{button.disabled=false;button.setAttribute('aria-busy','false');}
+ });
+}
+initStyleOptimization();
 let reviewDraftStore=null,reviewDraftIdentity='',reviewDraftDirty=false;
 function bindLyricReviewDraft(d,restore){
  reviewDraftStore=null;reviewDraftIdentity='';reviewDraftDirty=false;if(d.stage!=='ready')return;

@@ -163,6 +163,11 @@ html,body{margin:0;min-height:100%;background:#000}#os-mix-28{--studio-sidebar-w
 #os-mix-28 .studio-song-loading-card p{margin:0;font-size:14px}
 #os-mix-28 .studio-song-loading-card button{margin-top:6px;padding:8px 24px;border-radius:20px;background:#35353d}
 #os-mix-28 .studio-instrumental-toggle{display:inline-flex;align-items:center;gap:6px;border:1px solid #494952;border-radius:22px;padding:7px 12px;background:transparent;color:#c2c1cb;font-size:12px;white-space:nowrap}
+#os-mix-28 .studio-optimize-style{margin-top:8px;padding:6px 10px;border:1px solid #44444b;border-radius:8px;background:#242427;color:#e2e2e6;font-size:12px;cursor:pointer}
+#os-mix-28 .studio-optimize-style:hover{background:#333337}
+#os-mix-28 .studio-optimize-style:disabled{cursor:wait;opacity:.55}
+#os-mix-28 .studio-style-optimize-status{margin:8px 0 0;color:#a7a7af;font-size:12px;line-height:1.5}
+#os-mix-28 .studio-style-optimize-status.error{color:#f0a8a8}
 #os-mix-28 .studio-instrumental-toggle[aria-checked=true]{background:#e9d4b6;border-color:#e9d4b6;color:#211b16}
 #os-mix-28 .studio-instrumental-toggle svg{width:14px;height:14px}
 #os-mix-28.is-instrumental-create .studio-lyrics-card,#os-mix-28.is-instrumental-create #studio-custom-voice,#os-mix-28.is-instrumental-create label[for=studio-custom-voice]{display:none}
