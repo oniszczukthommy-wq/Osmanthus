@@ -151,6 +151,7 @@ const PREVIEW_CREDITS = {
 };
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
 const CATEGORIES = ['全部','流行','治愈','节奏','氛围'];
+const COVER_IDS = new Set(STYLE_LIBRARY.map(style=>style.id));
 
 /** Mount the homepage library. onSelect receives {id,name,prompt,...}; it never touches lyrics. */
 export function initStyleLibrary({root,onSelect,icons,onPreviewPlay,styles=STYLE_LIBRARY}={}) {
@@ -168,14 +169,15 @@ export function initStyleLibrary({root,onSelect,icons,onPreviewPlay,styles=STYLE
   const catalog=styles.filter(style=>style&&typeof style.id==='string'&&typeof style.name==='string'&&typeof style.prompt==='string').map(style=>({...style}));
   function render() {
     const items=catalog.filter(style=>selectedCategory==='全部'||style.category===selectedCategory);
-    grid.innerHTML=items.map((style,index)=>{
+    grid.innerHTML=items.map(style=>{
       let preview='';
       if(style.previewUrl){try{const url=new URL(style.previewUrl,location.href);if(url.origin===location.origin&&/^https?:$/.test(url.protocol))preview=url.href;}catch{}}
       const tags=Array.isArray(style.tags)?style.tags.slice(0,2):[];
+      const cover=COVER_IDS.has(style.id)?`<img src="/assets/style-covers/${encodeURIComponent(style.id)}.webp" alt="" loading="lazy" decoding="async">`:'';
       const credit=PREVIEW_CREDITS[style.id];
       const info=credit?`<p class="style-library-preview-note">${escapeHtml(credit.note)}</p><details class="style-library-credit"><summary>样曲信息</summary><p>${escapeHtml(credit.title)} · ${escapeHtml(credit.artist)}<br><a href="${escapeHtml(credit.source)}" target="_blank" rel="noopener noreferrer">原曲来源</a> · <a href="${escapeHtml(credit.licenseUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(credit.license)}</a> · 已截取、调整音量</p></details>`:'';
       const sample=preview?`<audio class="style-library-audio" controls preload="none" src="${escapeHtml(preview)}" aria-label="试听${escapeHtml(style.name)}"></audio>${info}`:'<p class="style-library-pending"><span aria-hidden="true">♫</span> 试听音频待补充</p>';
-      return `<article class="style-library-card"><div class="style-library-art style-art-${index%6}" aria-hidden="true"><span class="style-library-art-index">${String(index+1).padStart(2,'0')}</span><span class="style-library-art-symbol">${['◒','◍','◌','◉','◐','◔'][index%6]}</span><span class="style-library-art-lines"></span></div><div class="style-library-card-body"><div class="style-library-card-top"><h3>${escapeHtml(style.name)}</h3><span class="style-library-category">${escapeHtml(style.category)}</span></div><p class="style-library-description">${escapeHtml(style.description)}</p><div class="style-library-tags">${tags.map(tag=>`<span>${escapeHtml(tag)}</span>`).join('')}</div>${sample}<button type="button" class="style-library-use" data-style-use="${escapeHtml(style.id)}" aria-label="选用${escapeHtml(style.name)}风格"><span>选用风格</span><span aria-hidden="true">↗</span></button></div></article>`;
+      return `<article class="style-library-card"><div class="style-library-card-body"><div class="style-library-card-header"><div class="style-library-art" aria-hidden="true">${cover}</div><div class="style-library-card-info"><div class="style-library-card-top"><h3>${escapeHtml(style.name)}</h3><span class="style-library-category">${escapeHtml(style.category)}</span></div><p class="style-library-description">${escapeHtml(style.description)}</p></div></div><div class="style-library-tags">${tags.map(tag=>`<span>${escapeHtml(tag)}</span>`).join('')}</div>${sample}<button type="button" class="style-library-use" data-style-use="${escapeHtml(style.id)}" aria-label="选用${escapeHtml(style.name)}风格"><span>选用风格</span><span aria-hidden="true">↗</span></button></div></article>`;
     }).join('');
     grid.querySelectorAll('audio').forEach(audio=>audio.addEventListener('play',()=>{grid.querySelectorAll('audio').forEach(other=>{if(other!==audio)other.pause();});onPreviewPlay?.(audio);}));
   }

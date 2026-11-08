@@ -34,7 +34,7 @@ from voice_library import VoiceLibrary
 from lyrics import Lyrics
 from inspiration import generate as generate_inspiration
 from style_optimizer import optimize as optimize_style
-from style_previews import available_style_previews, style_preview_file
+from style_previews import STYLE_PREVIEW_IDS, available_style_previews, style_preview_file
 from svc import Conversions
 from sections import Sections, resolve_reference
 from score_review import ScoreReviews
@@ -413,7 +413,8 @@ class Handler(BaseHTTPRequestHandler):
                 if start>end or start>=size:return self.json(416,{'error':'Range超出文件'})
                 status=206
             self.send_response(status)
-            self.send_header('Content-Type',mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
+            # Windows' MIME registry may not include WebP even when browsers support it.
+            self.send_header('Content-Type','image/webp' if path.suffix.lower()=='.webp' else (mimetypes.guess_type(path.name)[0] or 'application/octet-stream'))
             self.send_header('Content-Length',str(end-start+1));self.send_header('Accept-Ranges','bytes')
             self.send_header('Cache-Control','no-cache')
             if status==206:self.send_header('Content-Range',f'bytes {start}-{end}/{size}')
@@ -569,6 +570,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve(ROOT/'index.html')
         if path=='/assets/brand/osmanthus-logo.png':
             return self.serve(ROOT/'assets/brand/osmanthus-logo.png')
+        match=re.fullmatch(r'/assets/style-covers/([a-z0-9-]+)\.webp',path)
+        if match:
+            if match[1] not in STYLE_PREVIEW_IDS:return self.json(404,{'error':'文件不存在'})
+            try:return self.serve(media_file(ROOT/'assets'/'style-covers',match[1]+'.webp',('.webp',)))
+            except ValueError:return self.json(404,{'error':'文件不存在'})
         if path=='/api/style-previews':return self.json(200,{'ids':available_style_previews(ROOT)})
         match=re.fullmatch(r'/style-previews/([a-z0-9-]+)\.mp3',path)
         if match:
