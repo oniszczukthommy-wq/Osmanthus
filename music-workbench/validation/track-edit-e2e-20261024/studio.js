@@ -342,7 +342,7 @@ window.osmanthusStudio={engine,api,openProject,openDetails,dialog,status,refresh
 fetch('/style-library.js',{cache:'no-store'}).then(response=>response.ok?import('./style-library.js'):null).then(module=>{
  if(!module)return;
  const stylesheet=document.createElement('link');stylesheet.rel='stylesheet';stylesheet.href='/style-library.css';document.head.append(stylesheet);
- const originalPresets=module.STYLE_LIBRARY.map(style=>`【已选风格：${style.name}】${style.prompt}`);
+ const originalPresets=[...module.STYLE_LIBRARY.map(style=>`【已选风格：${style.name}】${style.prompt}`),...(module.LEGACY_STYLE_PRESETS||[])];
  styleLibrary=module.initStyleLibrary({root,icons,onPreviewPlay:()=>{
   startingStylePreview=true;
   try{generationAutoplay?.cancel();player?.pause();window.pauseGenerationPreview?.();window.pauseScorePreview?.();window.pauseVocalPreview?.();window.pauseVoiceLibraryPreview?.();}
