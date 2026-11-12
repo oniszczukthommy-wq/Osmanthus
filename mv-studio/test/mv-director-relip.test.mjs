@@ -51,7 +51,11 @@ test('已生成镜头也可二次口型，选择后与其他已生成镜头混�
  const f=fixture(t,{mode:'narrative'});let s=await prepare(f);s=await ready(f.d,s,'render',{confirmed:true,subtitles:false});const prior=s.generated.id,shot=s.plan.shots[0];
  const q=await f.d.relipQuote(s.id,shot.id),job=await f.d.startRelip({session_id:s.id,revision:s.revision,request_id:id(),shot_id:shot.id,confirmed:true,confirmed_max_cost_cny:q.estimatedCostCny});await f.d.refresh(job.id);assert.equal(f.d.job(job.id).status,'ready',f.d.job(job.id).message);
  s=f.d.get(s.id);assert.equal(s.generated.id,prior);assert.equal(s.importedShots[shot.id].versions.length,2);
+ const sibling=s.plan.shots[1];assert(sibling,'测试需要另一个原生生成镜头');assert.match(s.shotVideos[sibling.id],/^\/files\/seedance25-video\/[a-f0-9-]{36}\/video\.mp4$/);assert.equal(s.shotVideos[shot.id],undefined);
  s=f.d.selectImportedShot({session_id:s.id,revision:s.revision,shot_id:shot.id,version_id:f.d.job(job.id).output.version_id});s=await ready(f.d,s,'compose-imports',{confirmed:true,subtitles:false});assert(s.generated.id!==prior);assert(f.d.asset(prior));
+ const siblingPath=s.shotVideos[sibling.id];assert(siblingPath,'合成后仍保留其他镜头');
+ let edits=s.plan.shots.map(x=>({id:x.id,description:x.description,sceneId:x.sceneId,characterIds:x.characterIds,musicStructure:x.musicStructure||''}));edits[0].description+='，灯光变暗';s=f.d.editScript({session_id:s.id,revision:s.revision,shots:edits});assert.equal(s.importedShots[shot.id].valid,false);assert.equal(s.shotVideos[shot.id],undefined,'失效的已选导入不能回退原生视频');assert.equal(s.shotVideos[sibling.id],siblingPath,'其他镜头不应因编辑本镜而消失');
+ edits=s.plan.shots.map(x=>({id:x.id,description:x.description,sceneId:x.sceneId,characterIds:x.characterIds,musicStructure:x.musicStructure||''}));edits[1].description+='，转身';s=f.d.editScript({session_id:s.id,revision:s.revision,shots:edits});assert.equal(s.shotVideos[sibling.id],undefined,'受修改影响的视频不得继续显示');
 });
 
 test('付费提交不明确时保留原镜头并禁止自动重试',async t=>{

@@ -69,7 +69,25 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     if(result.plan){registerCurrentAssets(result);decorateAssets(result);}
     for(const shot of s.plan?.shots||[])if(result.importedShots?.[shot.id]){try{result.importedShots[shot.id].valid=!!manualShot(s,shot);}catch{result.importedShots[shot.id].valid=false;}}
     return result;}
-  function get(id){return publicSession(session(id));}
+  // Jobs are small, local records. Match each ready task against the current
+  // shot recipe, rather than the latest job or revision: another shot may have
+  // changed while this video is still valid. File serving validates the bytes.
+  // Do not hash or read videos here; this runs on normal workspace reloads.
+  function generatedShotPaths(s){
+    const result={};if(!s?.plan||s.planStale||s.productionMode==='manual-web')return result;
+    let jobs;try{jobs=all('jobs').filter(j=>j?.session_id===s.id&&['render','retry-shot'].includes(j.kind));}catch{return result;}
+    const folder=s.productionMode==='lip-sync'?'wan3-tasks':s.productionMode?'seedance25-video':'aliyun-video';
+    for(const shot of s.plan.shots){
+      if(s.importedShots?.[shot.id]?.selected||!s.previews?.[shot.id]?.materialId)continue;
+      try{
+        const taskId=shotTask(s,shot,specFor(s,shot));
+        if(UUID.test(taskId)&&jobs.some(j=>j.shots?.some(v=>v.id===shot.id&&v.taskId===taskId&&v.status==='ready')))
+          result[shot.id]=`/files/${folder}/${taskId}/video.mp4`;
+      }catch{} // An incomplete recipe has no current generated video.
+    }
+    return result;
+  }
+  function get(id){const s=session(id),result=publicSession(s);if(result)result.shotVideos=generatedShotPaths(s);return result;}
   // Imported clips are bound to the particular shot, timeline and song. A
   // later creative edit or project change makes them ineligible for compose.
   function manualSignature(s,shot){const basis={shot,style:s.plan?.style,ratio:s.ratio,source:s.source_sha256,lyrics:s.lyrics,scene:s.plan?.scenes.find(x=>x.id===shot.sceneId),characters:(shot.characterIds||[]).map(id=>s.plan?.characters.find(x=>x.id===id))};const deps=[...(shot.characterIds||[]),shot.sceneId].map(id=>({id,revision:s.assetRevision?.[id]||0}));if(deps.some(x=>x.revision))basis.assetVersions=deps;return hash(basis);}

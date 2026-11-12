@@ -10,8 +10,11 @@ export function selectedImport(session,materials,id){
   return {...selected,valid:info.valid===true,url:material?.url};
 }
 export function readyShotPath(session,job,shot){
+  if(session?.planStale||session?.importedShots?.[shot?.id]?.selected)return '';
+  const candidate=session?.shotVideos?.[shot?.id];
+  if(typeof candidate==='string'&&/^\/files\/(wan3-tasks|seedance25-video|aliyun-video)\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}\/video\.mp4$/.test(candidate))return candidate;
   if(job?.session_id!==session?.id||job?.revision!==session?.revision)return '';
-  const v=job?.shots?.find(x=>x.id===shot.id);if(v?.status!=='ready'||!/^[a-f0-9-]{36}$/.test(v.taskId||''))return '';
+  const v=job?.shots?.find(x=>x.id===shot.id);if(v?.status!=='ready'||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v.taskId||''))return '';
   const mode=session.productionMode,folder=mode==='lip-sync'?'wan3-tasks':mode?'seedance25-video':'aliyun-video';
   return `/files/${folder}/${v.taskId}/video.mp4`;
 }
