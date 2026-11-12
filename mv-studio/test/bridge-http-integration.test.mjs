@@ -29,7 +29,7 @@ test('HTTP 手工镜头导入、版本选择、原歌合成与下载（所有模
  const json=async(route,body,method=body===undefined?'GET':'POST')=>{const r=await fetch(base+route,{method,...(body===undefined?{}:{headers:{'content-type':'application/json'},body:JSON.stringify(body)})});let value=await r.json();return{status:r.status,value};};
  async function upload(file){const r=await fetch(base+'/api/materials',{method:'POST',headers:{'x-filename':path.basename(file)},body:fs.readFileSync(file)});assert.equal(r.status,201);return (await r.json()).material;}
  try{
-  const cap=await json('/api/capabilities');assert.equal(cap.value.mvDirectorImportShots,true);assert.equal(cap.value.mvDirectorShotPreviewImport,true);assert.equal(cap.value.deepseek,false);
+  const cap=await json('/api/capabilities');assert.equal(cap.value.mvDirectorImportShots,true);assert.equal(cap.value.mvDirectorShotPreviewImport,true);assert.equal(cap.value.mvDirectorRegenerateShot,true);assert.equal(cap.value.deepseek,false);
   const front=await fetch(base+'/tunee-workspace.html');assert.equal(front.status,200);
   let result=await json('/api/mv-director/'+meta.sessionId);assert.equal(result.status,200);let s=result.value.session;assert.equal(s.productionMode,'manual-web');assert.equal(s.plan.shots.length,1);
   const shot=s.plan.shots[0],red=await upload(files[0]),blue=await upload(files[1]),short=await upload(files[2]);
@@ -60,6 +60,7 @@ test('HTTP 手工镜头导入、版本选择、原歌合成与下载（所有模
   assert.equal((await json(previewRoute,{revision:s.revision,shot_id:shot.id,material_id:candidate.id,extra:'ignored'})).status,400,'拒绝额外字段');
   const originalRevision=s.revision,preview=await json(previewRoute,{revision:s.revision,shot_id:shot.id,material_id:candidate.id});
   assert.equal(preview.status,200,JSON.stringify(preview.value));s=preview.value.session;
+  const manualQuote=await json(`/api/mv-director/${s.id}/regenerate-quote?shot_id=${encodeURIComponent(shot.id)}`);assert.equal(manualQuote.status,409);assert.match(manualQuote.value.error,/手工生成/);
   assert.equal(s.revision,originalRevision+1);assert.equal(s.previews[shot.id].materialId,candidate.id);assert.equal(s.importedShots[shot.id].valid,false,'换参考图后已导入镜头不再声称对应新图');assert.equal(s.generated,null);
   assert.equal((await fetch(base+job.output.url)).status,200,'历史成片依然可以下载');
   const same=await json(previewRoute,{revision:s.revision,shot_id:shot.id,material_id:candidate.id});assert.equal(same.status,200);assert.equal(same.value.session.revision,s.revision,'同一材料重复提交不应清空关联状态');

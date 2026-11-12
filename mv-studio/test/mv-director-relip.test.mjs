@@ -29,7 +29,7 @@ function fixture(t,{mode='manual-web',uncertain=false}={}){
  const wan={estimateRelip:({inputDuration,duration})=>({available:true,canSubmit:true,estimatedCostCny:2.4,remainingCny:5,inputDuration,outputDuration:duration}),get:id=>lip.get(id),asset:id=>lip.has(id)?{file:clip}:null,refresh:async id=>lip.get(id),submitRelip:async input=>{calls.push(input);if(uncertain)throw Object.assign(Error('不确定'),{retryBlocked:true});const r={id:input.request_id,status:'ready',providerTaskId:'remote-task-1'};lip.set(r.id,r);return r;}};
  const fetchImpl=async(_url,options)=>{const context=JSON.parse(JSON.parse(options.body).messages[1].content);const answer={summary:'故事',style:'电影',characters:[{name:'人物',description:'蓝外套'}],scenes:[{name:'场景',description:'街道'}],shots:context.slots.map(x=>({id:x.id,name:x.id,description:'人物走路',sceneId:'scene-1',characterIds:['character-1']}))};return{ok:true,text:async()=>JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(answer)}}]})};};
  const d=createMVDirector({data,key:'mock',materials,image,video,videoProviders:{seedance25:video,wan3:wan},audioPath:()=>song,probe,ffmpeg:ff,fetchImpl,analyze:async()=>({accents:[],energy:[]}),pollMs:60000});t.after(()=>d.close());
- return{d,project,materials,clip,png,data,calls,mode,failOutput:()=>{failOutputUpload=true;}};
+ return{d,project,materials,video,generated,clip,png,data,calls,mode,failOutput:()=>{failOutputUpload=true;}};
 }
 async function ready(d,s,kind,input){const j=d.start({session_id:s.id,revision:s.revision,request_id:id(),kind,input});await d.refresh(j.id);assert.equal(d.job(j.id).status,'ready',d.job(j.id).message);return d.get(s.id);}
 async function prepare(f){let s=f.d.open(f.project);s=await ready(f.d,s,'prepare',{selection:{mode:'full'},productionMode:f.mode,idea:'测试',ratio:'4:3',references:[]});s=await ready(f.d,s,'preview',{confirmed:true});return s;}
@@ -86,4 +86,61 @@ test('手工替换镜头参考图只令该镜头视频过期，其他镜头和�
  const stale=s.importedShots[first.id].selected,other=await f.materials.upload('other.png',fs.readFileSync(f.png));
  s=f.d.importShotPreview({session_id:s.id,revision:s.revision,shot_id:first.id,material_id:other.id});assert.equal(s.importedShots[first.id].valid,false);assert.equal(s.shotVideos[second.id],siblingPath);
  assert.throws(()=>f.d.selectImportedShot({session_id:s.id,revision:s.revision,shot_id:first.id,version_id:stale}),/不属于当前分镜/);
+});
+
+test('单镜重新生成需要确认报价，保留原镜头和成片，手动选择新版本',async t=>{
+ const f=fixture(t,{mode:'narrative'});let s=await prepare(f);s=f.d.confirmAssets({session_id:s.id,revision:s.revision});s=await ready(f.d,s,'render',{confirmed:true,subtitles:false});
+ const shot=s.plan.shots[0],oldOutput=s.generated.id,q=f.d.regenerateQuote(s.id,shot.id);assert(q.canSubmit);assert.equal(q.estimatedCostCny,1);
+ const input={shot_id:shot.id,confirmed:true,confirmed_max_cost_cny:q.estimatedCostCny};
+ assert.throws(()=>f.d.start({session_id:s.id,revision:s.revision,request_id:id(),kind:'regenerate-shot',input:{...input,confirmed:false}}),/确认/);
+ assert.throws(()=>f.d.start({session_id:s.id,revision:s.revision,request_id:id(),kind:'regenerate-shot',input:{...input,confirmed_max_cost_cny:.5}}),/重新报价/);
+ let calls=0;const oldSubmit=f.video.submit;f.video.submit=async x=>{calls++;return oldSubmit(x);};const request_id=id();
+ const args={session_id:s.id,revision:s.revision,request_id,kind:'regenerate-shot',input},j=f.d.start(args);assert.equal(f.d.start(args).id,j.id);
+ await f.d.refresh(j.id);assert.equal(f.d.job(j.id).status,'ready',f.d.job(j.id).message);assert.equal(calls,1);
+ s=f.d.get(s.id);const versions=s.importedShots[shot.id];assert.equal(versions.versions.length,2);assert.notEqual(versions.selected,f.d.job(j.id).output.version_id);assert.equal(s.generated.id,oldOutput);
+ s=f.d.selectImportedShot({session_id:s.id,revision:s.revision,shot_id:shot.id,version_id:f.d.job(j.id).output.version_id});assert.equal(s.importedShots[shot.id].selected,f.d.job(j.id).output.version_id);assert.equal(s.generated,null);assert(f.d.asset(oldOutput));
+});
+
+test('提交不明确或本地重启后无任务记录，均不再付费提交',async t=>{
+ const f=fixture(t,{mode:'narrative'});let s=await prepare(f);s=f.d.confirmAssets({session_id:s.id,revision:s.revision});const shot=s.plan.shots[0],q=f.d.regenerateQuote(s.id,shot.id);let calls=0;
+ f.video.submit=async()=>{calls++;throw Error('网络断开');};
+ const args={session_id:s.id,revision:s.revision,request_id:id(),kind:'regenerate-shot',input:{shot_id:shot.id,confirmed:true,confirmed_max_cost_cny:q.estimatedCostCny}};
+ const j=f.d.start(args);await f.d.refresh(j.id);assert.equal(f.d.job(j.id).status,'uncertain');assert.equal(calls,1);assert.equal(f.d.start(args).id,j.id);
+ assert.throws(()=>f.d.start({...args,request_id:id(),input:{...args.input,confirmed_max_cost_cny:2}}),/尚未确认/);assert.equal(calls,1);
+ const g=fixture(t,{mode:'narrative'});let other=await prepare(g);other=g.d.confirmAssets({session_id:other.id,revision:other.revision});const shot2=other.plan.shots[0],q2=g.d.regenerateQuote(other.id,shot2.id);let afterRestartCalls=0;g.video.submit=async()=>{afterRestartCalls++;throw Error('不得调用');};
+ const pending=g.d.start({session_id:other.id,revision:other.revision,request_id:id(),kind:'regenerate-shot',input:{shot_id:shot2.id,confirmed:true,confirmed_max_cost_cny:q2.estimatedCostCny}});
+ const jobPath=path.join(g.data,'mv-director','jobs',pending.id+'.json'),record=JSON.parse(fs.readFileSync(jobPath,'utf8'));record.status='running';record.providerSubmitStarted=true;fs.writeFileSync(jobPath,JSON.stringify(record));
+ await g.d.refresh(pending.id);assert.equal(g.d.job(pending.id).status,'uncertain');assert.equal(afterRestartCalls,0);
+});
+
+test('远端成功但本地登记失败可恢复同一任务，不重新付费提交',async t=>{
+ const f=fixture(t,{mode:'narrative'});let s=await prepare(f);s=f.d.confirmAssets({session_id:s.id,revision:s.revision});const shot=s.plan.shots[0],q=f.d.regenerateQuote(s.id,shot.id);
+ let calls=0;const oldSubmit=f.video.submit;f.video.submit=async input=>{calls++;return oldSubmit(input);};const upload=f.materials.upload;let failOnce=true;f.materials.upload=async(name,bytes)=>{if(failOnce&&name.includes('-regenerated-')){failOnce=false;throw Error('本地登记失败');}return upload(name,bytes);};
+ const j=f.d.start({session_id:s.id,revision:s.revision,request_id:id(),kind:'regenerate-shot',input:{shot_id:shot.id,confirmed:true,confirmed_max_cost_cny:q.estimatedCostCny}});await f.d.refresh(j.id);assert.equal(f.d.job(j.id).status,'failed');assert.equal(calls,1);
+ assert.throws(()=>f.d.recover(j.id),/确认/);f.d.recover(j.id,{confirmed:true});await f.d.refresh(j.id);assert.equal(f.d.job(j.id).status,'ready',f.d.job(j.id).message);assert.equal(calls,1);
+ s=f.d.get(s.id);assert.equal(s.importedShots[shot.id].selected,f.d.job(j.id).output.version_id,'尚无原视频时自动选中新版');assert.equal(s.importedShots[shot.id].valid,true);
+});
+
+test('预算不足、未连接和手动豆包模式不得提交单镜生成',async t=>{
+ const f=fixture(t,{mode:'narrative'});let s=await prepare(f);s=f.d.confirmAssets({session_id:s.id,revision:s.revision});const shot=s.plan.shots[0],before=f.video.capabilities;
+ f.video.capabilities=()=>({...before(),remainingCny:0});assert.equal(f.d.regenerateQuote(s.id,shot.id).canSubmit,false);
+ assert.throws(()=>f.d.start({session_id:s.id,revision:s.revision,request_id:id(),kind:'regenerate-shot',input:{shot_id:shot.id,confirmed:true,confirmed_max_cost_cny:2}}),/预算|额度/);
+ f.video.capabilities=()=>({...before(),available:false,reason:'未配置'});assert.equal(f.d.regenerateQuote(s.id,shot.id).available,false);
+ const g=fixture(t,{mode:'manual-web'});let other=await prepare(g);other=g.d.confirmAssets({session_id:other.id,revision:other.revision});assert.throws(()=>g.d.regenerateQuote(other.id,other.plan.shots[0].id),/手工生成/);
+});
+
+test('旧镜头因更换关键帧失效后可生成并自动选择新视频',async t=>{
+ const f=fixture(t,{mode:'narrative'});let s=await prepare(f);s=f.d.confirmAssets({session_id:s.id,revision:s.revision});const shot=s.plan.shots[0];
+ const old=await f.materials.upload('old.mp4',fs.readFileSync(f.clip));s=await f.d.importShot({session_id:s.id,revision:s.revision,shot_id:shot.id,material_id:old.id});const oldId=s.importedShots[shot.id].selected;
+ const image=await f.materials.upload('new.png',fs.readFileSync(f.png));s=f.d.importShotPreview({session_id:s.id,revision:s.revision,shot_id:shot.id,material_id:image.id});assert.equal(s.importedShots[shot.id].valid,false);
+ const q=f.d.regenerateQuote(s.id,shot.id),j=f.d.start({session_id:s.id,revision:s.revision,request_id:id(),kind:'regenerate-shot',input:{shot_id:shot.id,confirmed:true,confirmed_max_cost_cny:q.estimatedCostCny}});await f.d.refresh(j.id);
+ assert.equal(f.d.job(j.id).status,'ready',f.d.job(j.id).message);s=f.d.get(s.id);assert.equal(s.importedShots[shot.id].selected,f.d.job(j.id).output.version_id);assert.equal(s.importedShots[shot.id].valid,true);assert(s.importedShots[shot.id].versions.some(v=>v.id===oldId),'旧素材仍保留');
+});
+
+test('提供商明确失败后重新确认可提交新任务，同一请求仍幂等',async t=>{
+ const f=fixture(t,{mode:'narrative'});let s=await prepare(f);s=f.d.confirmAssets({session_id:s.id,revision:s.revision});const shot=s.plan.shots[0],q=f.d.regenerateQuote(s.id,shot.id),original=f.video.submit;let calls=0;
+ f.video.submit=async input=>{calls++;if(calls===1){const result={id:input.request_id,status:'failed',providerStatus:'FAILED'};f.generated.set(result.id,result);return result;}return original(input);};
+ const args={session_id:s.id,revision:s.revision,request_id:id(),kind:'regenerate-shot',input:{shot_id:shot.id,confirmed:true,confirmed_max_cost_cny:q.estimatedCostCny}};
+ const old=f.d.start(args);await f.d.refresh(old.id);assert.equal(f.d.job(old.id).status,'failed');assert.equal(f.d.start(args).id,old.id);
+ const next=f.d.start({...args,request_id:id()});assert.notEqual(next.id,old.id);await f.d.refresh(next.id);assert.equal(f.d.job(next.id).status,'ready',f.d.job(next.id).message);assert.equal(calls,2);
 });

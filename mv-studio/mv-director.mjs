@@ -89,6 +89,34 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     return result;
   }
   function get(id){const s=session(id),result=publicSession(s);if(result)result.shotVideos=generatedShotPaths(s);return result;}
+  // Collect only validated, current assets reachable from this session. Paths
+  // stay private to the server; public manifests contain archive names only.
+  function exportAssets(id,revision){
+    requireOpen();const s=session(id);if(!s)throw fail('找不到 MV 工程',404);
+    if(revision!==undefined&&(!Number.isSafeInteger(revision)||revision!==s.revision))throw fail('工程已变化，请重新检查导出内容',409);
+    const entries=[],items=[],missing=[];
+    const nameOf=x=>String(x?.name||x?.id||'素材').replace(/[\x00-\x1f\x7f]/g,' ').slice(0,120);
+    function add(kind,item,name,file,sha256){const stat=fs.lstatSync(file);if(!stat.isFile()||stat.isSymbolicLink()||!Number.isSafeInteger(stat.size)||stat.size<1||stat.size>1_000_000_000||!/^[a-f0-9]{64}$/.test(sha256||''))throw Error('素材无法验证');entries.push({name,file,size:stat.size,sha256,identity:{dev:stat.dev,ino:stat.ino,mtimeMs:stat.mtimeMs}});items.push({kind,id:item?.id||null,label:nameOf(item),path:name,bytes:stat.size});}
+    try{const audio=source(s),ext=path.extname(audio).toLowerCase();if(!['.mp3','.wav','.m4a','.aac','.flac','.ogg','.opus'].includes(ext))throw Error('音频格式不可导出');add('audio',{name:'原歌曲'},'Audio/source'+ext,audio,s.source_sha256);}catch{missing.push({kind:'audio',id:null,label:'原歌曲',reason:'原歌曲缺失或校验失败'});}
+    if(!s.plan||s.planStale)missing.push({kind:'plan',id:null,label:'当前方案',reason:s.planStale?'歌词已改变，请先重新规划':'尚未生成创意脚本'});
+    else {
+      validPreviews(s);
+      for(const [kind,list,folder] of [['character',s.plan.characters,'Characters'],['scene',s.plan.scenes,'Scenes']])for(const [index,item] of list.entries()){
+        try{const preview=s.previews?.[item.id],a=preview&&materials.asset(preview.materialId);if(!a||a.material?.kind!=='image')throw Error();const ext=path.extname(a.file).toLowerCase();if(!['.png','.jpg','.jpeg','.webp'].includes(ext))throw Error();add(kind,item,`Assets/${folder}/${String(index+1).padStart(3,'0')}${ext}`,a.file,a.material.sha256);}
+        catch{missing.push({kind,id:item.id,label:nameOf(item),reason:'当前图片未准备好或校验失败'});}
+      }
+      for(const [index,shot] of s.plan.shots.entries()){
+        try{const current=currentShot(s,shot);if(!current?.asset?.file)throw Error();const ext=path.extname(current.asset.file).toLowerCase();if(!['.mp4','.mov','.webm'].includes(ext))throw Error();add('shot',shot,`Storyboard/${String(index+1).padStart(3,'0')}${ext}`,current.asset.file,current.sha256);}
+        catch{missing.push({kind:'shot',id:shot.id,label:nameOf(shot),reason:'当前镜头未准备好、已失效或校验失败'});}
+      }
+    }
+    // Revision alone is insufficient: a running image task can finish or a
+    // local material can disappear without advancing the session revision.
+    // Bind user confirmation to names, missing items, sizes and content hashes.
+    const signature=hash({session_id:s.id,revision:s.revision,items,missing,files:entries.map(({name,size,sha256})=>({name,size,sha256}))});
+    const manifest={session_id:s.id,revision:s.revision,signature,items,missing,note:'仅包含当前工程有效素材，不包含最终成片；如需成片，请单独下载 MP4。'};
+    const data=Buffer.from(JSON.stringify(manifest,null,2),'utf8');entries.unshift({name:'manifest.json',data,size:data.length});return {manifest,entries};
+  }
   // Imported clips are bound to the particular shot, timeline and song. A
   // later creative edit or project change makes them ineligible for compose.
   function manualSignature(s,shot){const basis={shot,style:s.plan?.style,ratio:s.ratio,source:s.source_sha256,lyrics:s.lyrics,scene:s.plan?.scenes.find(x=>x.id===shot.sceneId),characters:(shot.characterIds||[]).map(id=>s.plan?.characters.find(x=>x.id===id))};const deps=[...(shot.characterIds||[]),shot.sceneId].map(id=>({id,revision:s.assetRevision?.[id]||0}));if(deps.some(x=>x.revision))basis.assetVersions=deps;const shotPreviewRevision=s.shotPreviewRevision?.[shot.id]||0;if(shotPreviewRevision)basis.shotPreviewRevision=shotPreviewRevision;if(s.visualStyle&&s.visualStyle!=='auto')basis.visualStyle=s.visualStyle;return hash(basis);}
@@ -202,7 +230,11 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     if(!UUID.test(project.id||'')||project.source.id==='sample')throw fail('请从自己的歌曲进入MV创作');
     const fingerprint=hash(fs.readFileSync(audioPath(project.source))),id=idFor(project.id+fingerprint),old=session(id);
     if(old)return get(id);
-    const s={id,project_id:project.id,title:project.title,source:project.source,source_sha256:fingerprint,lyrics:project.lyrics||[],manualLyrics:project.manualLyrics||'',project:clone(project),revision:0,plan:null,previews:{},outputs:[],activeJob:null,createdAt:new Date().toISOString()};saveSession(s);return get(id);
+    // The source project may already carry the range chosen at entry.  Copy it
+    // into the new MV session once, so a reload retains that selection without
+    // changing any previously saved project or existing session.
+    let range;try{range=selectMusicRange(project,{mode:'range',start:project.start,end:Math.min(project.source.duration,project.start+project.duration)});}catch{}
+    const s={id,project_id:project.id,title:project.title,source:project.source,source_sha256:fingerprint,lyrics:project.lyrics||[],manualLyrics:project.manualLyrics||'',project:clone(project),...(range?{range}:{}),revision:0,plan:null,previews:{},outputs:[],activeJob:null,createdAt:new Date().toISOString()};saveSession(s);return get(id);
   }
   // Manual lyric timing: when no alignment timeline exists (no TIFA on this
   // machine) the user can still give one, so 按歌词选段 is not a dead button.
@@ -410,6 +442,18 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     const signature=videoSignature(s,shot,spec);
     return override?.signature===signature && (override.productionMode||null)===(s.productionMode||null) && UUID.test(override.taskId||'') ? override.taskId : idFor(s.productionMode?['video',s.id,signature]:['video',s.id,spec]);
   }
+  // Fresh generation is deliberately separate from retry-shot: the currently
+  // selected video stays intact and the newly generated result is a candidate.
+  function regenerateQuote(s,shot_id){
+    if(!s?.plan)throw fail('请先创建分镜方案',404);requireCurrentPlan(s);source(s);validPreviews(s);
+    const shot=s.plan.shots.find(x=>x.id===shot_id);if(!shot)throw fail('找不到该分镜',404);
+    if(!assetsConfirmed(s)||!s.previews?.[shot.id]?.materialId)throw fail('请先确认角色与场景并准备本镜关键帧',409);
+    const provider=videoFor(s),spec=specFor(s,shot),cap=provider.capabilities();
+    const price=Number(cap.estimatedCostsCny?.[spec.duration]??(s.productionMode?NaN:spec.duration*.15));
+    const remaining=Number.isFinite(cap.remainingCny)?cap.remainingCny:null;
+    const available=cap.available===true,canSubmit=available&&Number.isFinite(price)&&price>0&&remaining!==null&&remaining>=price-.001;
+    return {shot_id:shot.id,duration:spec.duration,estimatedCostCny:Number.isFinite(price)?+price.toFixed(2):null,remainingCny:remaining,available,canSubmit,reason:available?(canSubmit?'':'预算或价格不可用'):cap.reason||'视频生成服务暂不可用'};
+  }
   function retryQuote(s,input){
     requireCurrentPlan(s);
     if(!s?.plan||!UUID.test(input?.failed_job_id||'')||typeof input?.shot_id!=='string')throw fail('镜头重试参数无效');
@@ -549,6 +593,40 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     if(!video.asset(taskId))throw fail('镜头文件校验失败，原有成片已保留',409);
     s.videoAttempts||={};s.videoAttempts[shot.id]={signature:videoSignature(s,shot,spec),taskId,productionMode:s.productionMode||null};saveSession(s);return true;
   }
+  async function regenerateShot(s,j){
+    const shot=s.plan.shots.find(x=>x.id===j.input.shot_id);if(!shot)throw fail('镜头已变化',409);
+    const provider=videoFor(s),spec=specFor(s,shot),taskId=idFor(['regenerate-shot',j.id]);
+    if(videoSignature(s,shot,spec)!==j.estimate.videoSignature)throw fail('镜头或关键帧已变化，未提交制作',409);
+    j.shots||=[{...shot,spec,taskId,status:'queued'}];j.providerTaskId=taskId;saveJob(j);
+    let result=provider.get(taskId);
+    if(!result){
+      if(j.providerSubmitStarted||j.blockRegenerateSubmit)throw Object.assign(fail('上次提交状态未确认，未重复提交',409),{uncertain:true});
+      const q=regenerateQuote(s,shot.id);if(!q.canSubmit||q.estimatedCostCny>j.input.confirmed_max_cost_cny+.001)throw fail('费用或可用额度已变化，未提交制作',409);
+      j.providerSubmitStarted=true;saveJob(j);
+      try{result=await provider.submit(sendSpec(s,shot,spec,taskId));}catch(e){e.uncertain=true;throw e;}
+    }
+    if(!['ready','failed','uncertain','unknown','canceled'].includes(result.status))try{result=await provider.refresh(taskId);}catch(e){e.uncertain=true;throw e;}
+    j.shots[0].status=result.status;j.message='正在重新生成镜头';saveJob(j);
+    if(['failed','uncertain','unknown','canceled'].includes(result.status))throw Object.assign(fail(result.error?.message||'镜头未完成，原镜头已保留',409),{uncertain:result.status!=='failed'||result.providerStatus!=='FAILED'||!!result.retryBlocked});
+    if(result.status!=='ready'){schedule(j.id);return false;}
+    const asset=provider.asset(taskId);if(!asset?.file)throw fail('新镜头文件校验失败，原镜头已保留',409);
+    // An old selected import may have become stale after a legitimate edit.
+    // Keep it in history, but do not let that prevent generating a new shot.
+    let current=null;try{current=currentShot(s,shot);}catch(e){if(!s.importedShots?.[shot.id]?.selected)throw e;}
+    let original=null;
+    if(current?.kind==='generated'){
+      const m=await materials.upload(`MV-${shot.id}-original-${j.id}.mp4`,fs.readFileSync(current.asset.file));
+      if(m.kind!=='video'||!Number.isFinite(m.duration)||m.duration+.04<shot.duration||!materials.asset(m.id))throw fail('原镜头素材校验失败',409);original=m;
+    }
+    const fresh=await materials.upload(`MV-${shot.id}-regenerated-${j.id}.mp4`,fs.readFileSync(asset.file));
+    if(fresh.kind!=='video'||!Number.isFinite(fresh.duration)||fresh.duration+.04<shot.duration||!materials.asset(fresh.id))throw fail('新镜头素材校验失败，原镜头已保留',409);
+    const latest=session(s.id);if(!latest||latest.revision!==s.revision||latest.activeJob!==j.id||videoSignature(latest,shot,spec)!==j.estimate.videoSignature)throw fail('工程已变化，结果保存在素材库，请手动导入',409);
+    s.importedShots||={};const entry=s.importedShots[shot.id]||={versions:[],selected:null};
+    if(!entry.selected&&original){const originalId=idFor(['regenerate-original',j.id]);if(!entry.versions.some(v=>v.id===originalId))entry.versions.push({id:originalId,materialId:original.id,url:original.url,sha256:original.sha256,duration:original.duration,signature:manualSignature(s,shot),createdAt:new Date().toISOString()});entry.selected=originalId;}
+    const newId=idFor(['regenerate-output',j.id]);if(!entry.versions.some(v=>v.id===newId))entry.versions.push({id:newId,materialId:fresh.id,url:fresh.url,sha256:fresh.sha256,duration:fresh.duration,signature:manualSignature(s,shot),createdAt:new Date().toISOString(),kind:'regenerated'});
+    if(!current)entry.selected=newId;
+    j.output={version_id:newId,material_id:fresh.id,url:fresh.url};s.revision++;saveSession(s);return true;
+  }
   async function relipShot(s,j){
     const provider=videoProviders.wan3,shot=s.plan.shots.find(x=>x.id===j.input.shot_id);
     if(!provider||!shot||manualSignature(s,shot)!==j.input.manual_signature)throw fail('镜头已变化，口型任务已停止',409);
@@ -604,6 +682,8 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
         j.status='running';saveJob(j);if(!await renderVideo(s,j))return;
       }else if(j.kind==='retry-shot'){
         j.status='running';saveJob(j);if(!await retryShot(s,j))return;
+      }else if(j.kind==='regenerate-shot'){
+        j.status='running';saveJob(j);if(!await regenerateShot(s,j))return;
       }else if(j.kind==='relip-shot'){
         j.status='running';saveJob(j);if(!await relipShot(s,j))return;
       }else if(j.kind==='compose-imports'){
@@ -615,7 +695,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
           saveJob(j);j.output=await compose(s,j);
         }
       }
-      j.status='ready';j.progress=100;j.message=({prepare:'方案已准备好',revise:'修改已应用，请检查受影响的分镜',preview:'方案图片已准备好，请审核','assets-preview':'角色和场景图片已准备好，请选择并确认','shots-preview':'分镜图片已准备好，请审核',render:'MV已完成','compose-imports':'已导入镜头合成为 MV','retry-shot':'镜头已完成，可继续原任务','relip-shot':'口型版本已保存，请在历史中选择'})[j.kind];saveJob(j);s.activeJob=null;saveSession(s);
+      j.status='ready';j.progress=100;j.message=({prepare:'方案已准备好',revise:'修改已应用，请检查受影响的分镜',preview:'方案图片已准备好，请审核','assets-preview':'角色和场景图片已准备好，请选择并确认','shots-preview':'分镜图片已准备好，请审核',render:'MV已完成','compose-imports':'已导入镜头合成为 MV','retry-shot':'镜头已完成，可继续原任务','relip-shot':'口型版本已保存，请在历史中选择','regenerate-shot':'新镜头已保存，请在历史中选择'})[j.kind];saveJob(j);s.activeJob=null;saveSession(s);
     }catch(e){j.status=e.uncertain||j.status==='calling'?'uncertain':'failed';j.message=String(e.message||'本次操作未完成').replaceAll(key||'\0','[redacted]').slice(0,240);saveJob(j);if(s?.activeJob===id){s.activeJob=null;saveSession(s);}}
     finally{inflight.delete(id);if(closed&&!inflight.size)releaseLease();}
   }
@@ -628,6 +708,18 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     }else if(!s.plan)throw fail('请先生成方案');else requireCurrentPlan(s);
     if(kind==='prepare'||kind==='revise'){if(!key)throw fail('创作助手尚未配置',503);}
     if(kind==='revise'){affectedShots(s.plan,input.target);if(typeof input.instruction!=='string'||!input.instruction.trim()||input.instruction.length>2000)throw fail('请输入修改要求');}
+    if(kind==='regenerate-shot'){
+      if(!input||Object.keys(input).some(k=>!['shot_id','confirmed','confirmed_max_cost_cny'].includes(k))||input.confirmed!==true||!Number.isFinite(input.confirmed_max_cost_cny)||input.confirmed_max_cost_cny<=0)throw fail('请先确认单镜生成的预计费用');
+      const estimate=regenerateQuote(s,input.shot_id),shot=s.plan.shots.find(x=>x.id===input.shot_id),provider=videoFor(s);
+      if(!estimate.canSubmit)throw fail(estimate.reason||'视频生成服务不可用或额度不足',503);
+      if(estimate.estimatedCostCny>input.confirmed_max_cost_cny+.001)throw fail('预计费用已变化，请重新报价',409);
+      const spec=specFor(s,shot),signature=videoSignature(s,shot,spec);
+      for(const old of all('jobs').filter(j=>j.kind==='regenerate-shot'&&j.session_id===s.id&&j.input?.shot_id===shot.id&&j.estimate?.videoSignature===signature)){
+        if(['queued','running','uncertain','unknown'].includes(old.status))throw fail('该镜头上次生成状态尚未确认，请先检查原任务',409);
+        if(old.status==='failed'&&old.providerSubmitStarted){const task=provider.get(idFor(['regenerate-shot',old.id]));if(!task||task.status!=='failed'||task.providerStatus!=='FAILED'||task.retryBlocked)throw fail('上次生成状态尚未确认，不能重复提交',409);}
+      }
+      return {...estimate,videoSignature:signature};
+    }
     if(kind==='retry-shot'){
       if(!input||Object.keys(input).some(k=>!['failed_job_id','shot_id','confirmed'].includes(k)))throw fail('镜头重试参数无效');
       const estimate=retryQuote(s,input);
@@ -668,10 +760,15 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   }
   function start({session_id,request_id,revision,kind,input={}}){
     requireOpen();
-    if(!UUID.test(request_id||'')||!['prepare','revise','preview','assets-preview','shots-preview','render','retry-shot','compose-imports'].includes(kind))throw fail('MV操作无效');
+    if(!UUID.test(request_id||'')||!['prepare','revise','preview','assets-preview','shots-preview','render','retry-shot','regenerate-shot','compose-imports'].includes(kind))throw fail('MV操作无效');
     const signature=hash({session_id,revision,kind,input}),previous=job(request_id);
     if(previous){if(previous.signature!==signature)throw fail('同一请求不能更换内容',409);return previous;}
-    const duplicate=all('jobs').find(j=>j.signature===signature);if(duplicate)return duplicate;
+    let duplicate=all('jobs').find(j=>j.signature===signature);
+    if(duplicate&&kind==='regenerate-shot'&&duplicate.status==='failed'&&duplicate.providerSubmitStarted){
+      const previousSession=session(session_id),provider=previousSession&&videoFor(previousSession),task=provider?.get(idFor(['regenerate-shot',duplicate.id]));
+      if(task?.status==='failed'&&task.providerStatus==='FAILED'&&!task.retryBlocked)duplicate=null;
+    }
+    if(duplicate)return duplicate;
     const s=session(session_id);if(!s)throw fail('找不到这首歌的MV工程',404);if(s.revision!==revision)throw fail('方案已更新，请刷新后修改',409);if(s.activeJob&&!terminal.has(job(s.activeJob)?.status))throw fail('请等待当前制作完成',409);source(s);
     const estimate=preflight(s,kind,input),j={id:request_id,session_id,revision,kind,input:clone(input),signature,estimate,status:'queued',progress:0,message:'准备处理',createdAt:new Date().toISOString()};
     saveJob(j);s.activeJob=j.id;s.lastJob=j.id;if(kind==='render')s.subtitles=!!input.subtitles;saveSession(s);schedule(j.id,1);return clone(j);
@@ -679,13 +776,19 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   function asset(id){const j=job(id);if(j?.status!=='ready'||!['render','compose-imports'].includes(j.kind)||!j.output)return null;const f=path.join(root,'media',id,'mv.mp4');if(!fs.existsSync(f)||hash(fs.readFileSync(f))!==j.output.sha256)return null;return{file:f,kind:'video',...j.output};}
   function recover(id,{confirmed=false}={}){
     requireOpen();
-    const j=job(id);if(!j||!['preview','assets-preview','shots-preview','render','compose-imports','relip-shot'].includes(j.kind)||j.status!=='failed')throw fail('这项任务不能自动重试，请先核对原任务',409);
+    const j=job(id);if(!j||!['preview','assets-preview','shots-preview','render','compose-imports','relip-shot','regenerate-shot'].includes(j.kind)||j.status!=='failed')throw fail('这项任务不能自动重试，请先核对原任务',409);
     const s=session(j.session_id);if(s.activeJob||s.revision!==j.revision)throw fail('方案已改变或有其他任务，请查看当前方案',409);
     if(j.kind==='relip-shot'){
       const task=videoProviders.wan3?.get(idFor(['relip-shot',j.id]));
       if(!task?.providerTaskId||!['ready','queued','running','download_failed'].includes(task.status))throw fail('原口型任务未确认可恢复，禁止重新付费提交',409);
       if(confirmed!==true)throw fail('请确认继续查询和保存原口型任务');
       source(s);j.blockRelipSubmit=true;
+    }
+    if(j.kind==='regenerate-shot'){
+      const task=videoFor(s).get(idFor(['regenerate-shot',j.id]));
+      if(!task||!['ready','queued','running','download_failed'].includes(task.status))throw fail('原镜头任务未确认可恢复，禁止重新提交',409);
+      if(confirmed!==true)throw fail('请确认继续查询和保存原镜头任务');
+      source(s);j.blockRegenerateSubmit=true;
     }
     if(j.kind==='compose-imports'){
       if(confirmed!==true)throw fail('请确认重新合成本地镜头');
@@ -706,7 +809,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     j.status='queued';j.message='正在恢复已有素材与任务';saveJob(j);s.activeJob=id;saveSession(s);schedule(id,1);return j;
   }
   for(const j of all('jobs'))if(!terminal.has(j.status))schedule(j.id,100);
-  return{open,get,start,startRelip,relipQuote,recover,setLyrics,editScript,importShot,importShotPreview,selectImportedShot,addAssetCandidate,selectAssetVersion,confirmAssets,retryQuote:(id,input)=>retryQuote(session(id),input),quote:(id,kind)=>{const s=session(id);if(!s||!['preview','assets-preview','shots-preview','render','complete'].includes(kind))throw fail('MV方案或操作无效');return quote(s,kind);},job:id=>job(id),list:()=>all('sessions').map(publicSession).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)),asset,
+  return{open,get,exportAssets,start,startRelip,relipQuote,recover,setLyrics,editScript,importShot,importShotPreview,selectImportedShot,addAssetCandidate,selectAssetVersion,confirmAssets,retryQuote:(id,input)=>retryQuote(session(id),input),regenerateQuote:(id,shot)=>regenerateQuote(session(id),shot),quote:(id,kind)=>{const s=session(id);if(!s||!['preview','assets-preview','shots-preview','render','complete'].includes(kind))throw fail('MV方案或操作无效');return quote(s,kind);},job:id=>job(id),list:()=>all('sessions').map(publicSession).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)),asset,
     refresh:async id=>{await advance(id);return job(id);},close(){closed=true;for(const timer of timers.values())clearTimeout(timer);timers.clear();if(!inflight.size)releaseLease();}};
   }catch(error){releaseLease();throw error;}
 }
