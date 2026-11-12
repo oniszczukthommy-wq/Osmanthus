@@ -31,6 +31,16 @@ def file_sha256(path):
   for block in iter(lambda:source.read(1024*1024),b''):digest.update(block)
  return digest.hexdigest()
 
+def stage_alignment_audio(source,target):
+ """Use a link where possible; Windows may not allow creating symlinks."""
+ try:target.symlink_to(source)
+ except OSError:
+  # The per-job input directory is new. Never overwrite an existing path,
+  # and verify that the staged file contains the same original audio.
+  if target.exists() or target.is_symlink():raise
+  shutil.copyfile(source,target)
+  if file_sha256(target)!=file_sha256(source):raise ValueError('人声音频复制校验失败，请重试出谱')
+
 def step_timeout(script,duration):
  """Allow bounded CPU analysis time in proportion to the complete song."""
  if isinstance(duration,bool) or not isinstance(duration,(int,float)) or not math.isfinite(duration) or duration<=0:raise ValueError('歌曲时长无效，无法确定本地出谱时限')
@@ -190,8 +200,8 @@ class Scores:
    directory=JOBS/identifier;directory.mkdir();save_json(directory/'state.json',state)
    with (directory/'worker.log').open('a') as log:
     try:
-     child=subprocess.Popen([str(PYTHON),str(ROOT/'scores.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,
-      env={**os.environ,'OPENBLAS_NUM_THREADS':'1','OMP_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1',
+     child=subprocess.Popen([str(PYTHON),'-X','utf8',str(ROOT/'scores.py'),'--run-job',identifier],stdout=log,stderr=log,start_new_session=True,
+      env={**os.environ,'PYTHONUTF8':'1','PYTHONIOENCODING':'utf-8','OPENBLAS_NUM_THREADS':'1','OMP_NUM_THREADS':'1','VECLIB_MAXIMUM_THREADS':'1',
            'MUSIC_GAME_CHUNK_SECONDS':os.environ.get('MUSIC_GAME_CHUNK_SECONDS','8')})
      self.children.append(child)
     except OSError as e:state.update(stage='error',error=str(e)[:200],finished_at=time.time());save_json(directory/'state.json',state)
@@ -260,7 +270,7 @@ def work(identifier):
      measured=json.loads((analysis/'rain-vocal-notes.json').read_text())
      if measured['source_sha256']!=state['vocal_sha256']:raise ValueError('已有音符分析与当前人声不匹配')
     else:
-     analysis.mkdir();inputs=analysis/'alignment-inputs';inputs.mkdir();(inputs/'rain-vocals.wav').symlink_to(vocal_path)
+     analysis.mkdir();inputs=analysis/'alignment-inputs';inputs.mkdir();stage_alignment_audio(vocal_path,inputs/'rain-vocals.wav')
      (inputs/'rain-vocals.txt').write_text('\n'.join(line for line in lyrics.splitlines() if not line.startswith('[')))
      transcription=None if state.get('force_recompute') else cached_transcription(context,duration,identifier)
      if transcription:

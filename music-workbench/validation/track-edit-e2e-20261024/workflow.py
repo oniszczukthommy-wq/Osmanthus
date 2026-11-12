@@ -5,6 +5,7 @@ import urllib.error, urllib.request
 from math import isfinite
 from pathlib import Path
 from project import ROOT, save_json
+from provider_errors import lyrics_curl_failure, split_curl_response
 
 spec=importlib.util.spec_from_file_location('workbench_song_stream',ROOT.parent/'yinchao-streaming-20261024/server.py')
 STREAM=importlib.util.module_from_spec(spec);spec.loader.exec_module(STREAM)
@@ -195,7 +196,10 @@ class Workflow:
                 job=json.loads(path.read_text());audio=path.parent/'complete.mp3'
                 if valid_id(job['id']) and audio.exists():result.append({'key':'stream:'+job['id'],'title':job['title'],'path':audio})
             except (ValueError,KeyError):continue
-        cases=json.loads((ROOT.parent/'provider-song-comparison-20261024/cases.json').read_text())['cases']
+        try:
+            cases=json.loads((ROOT.parent/'provider-song-comparison-20261024/cases.json').read_text())['cases']
+        except (OSError,ValueError,KeyError):
+            cases=[]
         for case in cases:
             audio=ROOT.parent/'provider-song-comparison-20261024/yinchao'/case['id']/'song.mp3'
             if audio.exists():result.append({'key':'case:'+case['id'],'title':case['title'],'path':audio})
@@ -243,12 +247,18 @@ class Workflow:
         for attempt in range(LYRIC_ATTEMPTS):
             save_json(folder/f'lyrics-request-attempt-{attempt+1}.json',request)
             save_json(payload,request)
-            with paid_call('text'):
-                completed=subprocess.run(['curl','--noproxy','*','--silent','--show-error','--fail-with-body','--connect-timeout','10','--max-time','75',
-                    '--header','@-','--data-binary','@'+str(payload),'https://api.deepseek.com/chat/completions'],
-                    input=('Authorization: Bearer '+key+'\nContent-Type: application/json\n').encode(),capture_output=True,timeout=80)
-            if completed.returncode:raise RuntimeError('写词服务连接失败；尚未提交付费生歌任务，可重试')
-            response=json.loads(completed.stdout);save_json(folder/'lyrics-response.json',response)
+            try:
+                with paid_call('text'):
+                    completed=subprocess.run(['curl','--noproxy','*','--silent','--show-error','--fail-with-body','--connect-timeout','10','--max-time','75',
+                        '--write-out','\n__OSMANTHUS_HTTP_STATUS__:%{http_code}',
+                        '--header','@-','--data-binary','@'+str(payload),'https://api.deepseek.com/chat/completions'],
+                        input=('Authorization: Bearer '+key+'\nContent-Type: application/json\n').encode(),capture_output=True,timeout=80)
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(lyrics_curl_failure(28, None)) from None
+            raw,status=split_curl_response(completed.stdout)
+            if completed.returncode or (status is not None and status >= 400):
+                raise RuntimeError(lyrics_curl_failure(completed.returncode,status))
+            response=json.loads(raw);save_json(folder/'lyrics-response.json',response)
             save_json(folder/f'lyrics-response-attempt-{attempt+1}.json',response)
             song=None
             try:
@@ -341,8 +351,12 @@ class Workflow:
             if job.get('batch_id'):continue  # Pair manager owns recovery and selection.
             if job.get('stage') not in TERMINAL:
                 if job.get('submission_started') and not job.get('task_id') and not job.get('download_ready'):
-                    self.stage(job,'error',pipeline_error='重启前提交结果不确定，未自动重新扣费')
-                else:self.launch(job)
+                    message='重启前提交结果不确定，未自动重新扣费；请先核对原任务。'
+                else:
+                    message='服务重启后任务已暂停；请先核对，再手动恢复已有任务。'
+                # In-memory state only. Explicit resume remains available; no
+                # automatic lyric, music or artwork requests on process start.
+                job.update(stage='error',pipeline_error=message,error=message)
 
     def telemetry(self,identifier,body):
         job=self.jobs.get(identifier)

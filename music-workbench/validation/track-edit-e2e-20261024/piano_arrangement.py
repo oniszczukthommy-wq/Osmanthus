@@ -124,7 +124,7 @@ def render(directory,analysis,output):
     for tick,on,pitch,velocity in sorted(events,key=lambda e:(e[0],e[1])):
         track.append(mido.Message('note_on' if on else 'note_off',note=pitch,velocity=velocity if on else 0,time=tick-previous_tick));previous_tick=tick
     midi.save(output/'new-piano.mid');save_json(output/'notes.json',notes)
-    synth=ROOT.parent/'audio-runtime/env/bin/fluidsynth';sf2=ROOT.parent/'instrument-generaluser/GeneralUser-GS.sf2'
+    synth=media_tool(ROOT.parent/'audio-runtime/env/bin/fluidsynth');sf2=ROOT.parent/'instrument-generaluser/GeneralUser-GS.sf2'
     result=subprocess.run([str(synth),'-ni','-g','0.6','-o','synth.reverb.active=0','-o','synth.chorus.active=0',
                            '-F',str(output/'synth.wav'),'-r','44100',str(sf2),str(output/'new-piano.mid')],capture_output=True,timeout=60)
     if result.returncode:raise ValueError('钢琴音源渲染失败：'+result.stderr.decode(errors='replace')[-200:])

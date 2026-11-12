@@ -5,6 +5,16 @@ import numpy as np
 
 ID=re.compile(r'^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$')
 def valid_id(value):return isinstance(value,str) and bool(ID.fullmatch(value))
+def metadata_fingerprint(info):
+    """Identify the handoff metadata independently of its audio revision."""
+    fields={k:info.get(k) for k in ('title','duration','lyrics','style','timed_lyrics','cover_url')}
+    encoded=json.dumps(fields,sort_keys=True,ensure_ascii=False,separators=(',',':'),allow_nan=False).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+def attach_metadata_fingerprint(info,expected=None):
+    value=metadata_fingerprint(info)
+    if expected and 'metadata_fingerprint' in expected and expected['metadata_fingerprint']!=value:
+        raise RuntimeError('歌曲的歌词或信息已变化，请重新点击创作MV')
+    return {**info,'metadata_fingerprint':value}
 def atomic(path,value):
     temporary=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
     try:temporary.write_text(json.dumps(value,ensure_ascii=False,indent=2));os.replace(temporary,path)
@@ -23,7 +33,12 @@ class MVHandoffs:
         except Exception:raise RuntimeError('MV交接记录损坏，未重新创建')
         if state.get('id')!=identifier:raise RuntimeError('MV交接记录不匹配')
         return state
-    def public(self,state):return copy.deepcopy(state['public'])
+    def public(self,state):
+        if not isinstance(state.get('public'),dict):raise RuntimeError('MV交接记录损坏，未重新创建')
+        result=copy.deepcopy(state['public'])
+        try:result.setdefault('metadata_fingerprint',metadata_fingerprint(result))
+        except (TypeError,ValueError):raise RuntimeError('MV交接记录损坏，未重新创建') from None
+        return result
     def audio(self,identifier):
         state=self.read(identifier);file=Path(state['audio_file']).resolve()
         if not file.is_relative_to(self.root) or not file.is_file() or digest(file)!=state['public']['audio_sha256']:raise RuntimeError('交接音频已变化，请从歌曲重新创建MV')
@@ -32,13 +47,26 @@ class MVHandoffs:
         identifier=body.get('request_id')
         if not valid_id(identifier) or not valid_id(body.get('project_id')):raise ValueError('缺少有效的MV创作标识')
         intent={k:body.get(k) for k in ('project_id','source_kind','revision','fingerprint')}
+        # Preserve legacy request signatures when the new field is absent.
+        if 'metadata_fingerprint' in body:
+            if not isinstance(body['metadata_fingerprint'],str) or not re.fullmatch(r'[a-f0-9]{64}',body['metadata_fingerprint']):
+                raise ValueError('歌词或歌曲信息标识无效，请重新打开 MV 入口')
+            intent['metadata_fingerprint']=body['metadata_fingerprint']
         if intent['source_kind'] not in ('current_mix','generated_original'):raise ValueError('请选择歌曲原音频或当前混音')
         signature=hashlib.sha256(json.dumps(intent,sort_keys=True).encode()).hexdigest()
         with self.lock:
             file=self.directory/(identifier+'.json')
             if file.exists():
                 state=self.read(identifier)
-                if state.get('intent_sha256')!=signature:raise RuntimeError('原MV请求对应另一版歌曲，请重新创建')
+                if state.get('intent_sha256')!=signature:
+                    legacy={k:intent[k] for k in ('project_id','source_kind','revision','fingerprint')}
+                    legacy_signature=hashlib.sha256(json.dumps(legacy,sort_keys=True).encode()).hexdigest()
+                    if ('metadata_fingerprint' not in intent or state.get('intent_sha256')!=legacy_signature or
+                        metadata_fingerprint(state['public'])!=intent['metadata_fingerprint']):
+                        raise RuntimeError('原MV请求对应另一版歌曲，请重新创建')
+                # A metadata-aware caller must still match the currently frozen
+                # source, even when a prior handoff can be reused.
+                if 'metadata_fingerprint' in intent:resolve(intent)
                 self.audio(identifier);return self.public(state)
             # The resolver validates the requested revision before freezing audio.
             info=resolve(intent);snapshot=info.pop('snapshot',None);source=info.pop('audio_file',None)

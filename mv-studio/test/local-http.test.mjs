@@ -13,6 +13,7 @@ test('actual MV HTTP server rejects foreign authority/origins for reads and writ
   {Host:local+':80'},{Host:`127.0.0.1.evil.example:${port}`}
  ])assert.equal(await request(method,headers),403,JSON.stringify({method,headers}));
  for(const host of [local,`localhost:${port}`])assert.equal(await request('GET',{Host:host,Origin:`http://${host}`}),200);
+ const capabilities=await (await fetch(`http://${local}/api/capabilities`)).json();assert.equal(capabilities.mvDirectorShotRetry,true);
  assert.equal(await request('GET',{Host:local},'http://evil.example/api/capabilities'),403);
  assert.equal(await request('GET',{Host:local},'//evil.example/api/capabilities'),403);
  assert.equal(await request('POST',{Host:'evil.example',Origin:'http://evil.example','x-filename':'test.wav'},'/api/upload'),403);

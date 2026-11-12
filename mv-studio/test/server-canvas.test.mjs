@@ -183,8 +183,16 @@ test('材料、画布目录、音乐关联和输出尺寸使用独立临时DATA�
     await t.test('没有内置示例音频时仍能创建和编辑空白画布，选真实音乐后再制作', async () => {
       const blank=makeProject();blank.id=crypto.randomUUID();blank.studio={freeCanvas:true,type:'canvas',canvas:createCanvasDocument()};
       const created=await request('/api/canvas-projects',{project:blank});assert.equal(created.status,201);
-      const edit={...created.data.project,title:'空白画布编辑'};
+      let canvas=addNode(created.data.project.studio.canvas,{id:'blank-text',type:'text',content:'保留文字'});
+      canvas=addNode(canvas,{id:'blank-image',type:'image',asset:{id:image.id,url:image.url,name:image.name}});
+      const edit={...created.data.project,title:'空白画布编辑',studio:{...created.data.project.studio,canvas}};
       const saved=await request('/api/project',edit,'PUT');assert.equal(saved.status,200);
+      const second=makeProject();second.id=crypto.randomUUID();second.studio={freeCanvas:true,type:'canvas',canvas:createCanvasDocument()};
+      const secondCreated=await request('/api/canvas-projects',{project:second});assert.equal(secondCreated.status,201);
+      assert.equal(secondCreated.data.project.studio.canvas.nodes.length,0);
+      const preserved=await readProject(blank.id);assert.equal(preserved.status,200);
+      assert.deepEqual(preserved.data.project.studio.canvas.nodes.map(node=>node.id),['blank-text','blank-image']);
+      assert.equal(preserved.data.project.studio.canvas.nodes[0].content,'保留文字');
       const renamed=await request(`/api/canvas-projects/${blank.id}/rename`,{title:'空白改名',revision:saved.data.record.revision});assert.equal(renamed.status,200);
       assert.equal((await request(`/api/canvas-projects/${blank.id}/open`,{})).status,200);
       assert.equal((await request('/api/versions',{project:renamed.data.project,label:'上传音乐前'})).status,201);

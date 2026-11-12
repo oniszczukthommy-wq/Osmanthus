@@ -159,7 +159,7 @@ class GenerationDraftTests(unittest.TestCase):
         self.assertEqual(len(self.pairs.batches),1)
         self.assertEqual(self.pair_launch.call_count,1)
 
-    def test_crash_after_approval_before_batch_creation_recovers_same_payload(self):
+    def test_crash_after_approval_requires_explicit_confirmation_before_batch_creation(self):
         draft=self.ready();self.manager.update(draft['id'],{'version':1,'lyrics':'崩溃前确认的最终歌词'})
         body=self.confirm_body(draft)
         with patch.object(self.pairs,'start',side_effect=SystemExit('simulated process loss after approval')):
@@ -168,9 +168,15 @@ class GenerationDraftTests(unittest.TestCase):
         self.assertEqual(approved['stage'],'confirmed')
         self.assertFalse(self.pairs.batches)
         _,pairs,manager=self.restore()
-        with patch.object(pairs,'launch_draft') as launch,patch.object(manager.workflow,'lyrics') as writer:
-            manager.recover();manager.recover();result=manager.confirm(draft['id'],body)
-            self.assertEqual(launch.call_count,1);writer.assert_not_called()
+        with patch.object(pairs,'launch_draft') as launch,patch.object(manager.workflow,'lyrics') as writer, \
+             patch.object(manager,'save_state', wraps=manager.save_state) as save:
+            manager.recover();manager.recover()
+            launch.assert_not_called();writer.assert_not_called()
+            save.assert_not_called()
+            self.assertFalse(pairs.batches)
+            self.assertIn('停止自动提交',manager.read(draft['id'])['generation_error'])
+            result=manager.confirm(draft['id'],body)
+            self.assertEqual(launch.call_count,1)
         self.assertEqual(result['batch']['id'],approved['batch_id'])
         self.assertEqual(pairs.read(approved['batch_id'])['lyrics'],approved['approved_payload']['lyrics'])
         self.worker.assert_not_called()
@@ -223,6 +229,19 @@ class GenerationDraftTests(unittest.TestCase):
             launch.assert_not_called();draft_launch.assert_not_called()
         self.assertEqual(manager.read(draft['id']),before)
         self.assertFalse(pairs.batches);self.worker.assert_not_called()
+
+    def test_restart_of_writing_draft_does_not_repeat_paid_text_request(self):
+        draft=self.manager.start(self.body)
+        self.assertEqual(self.manager.read(draft['id'])['stage'],'writing')
+        _,pairs,manager=self.restore()
+        with patch.object(manager,'launch') as launch,patch.object(pairs,'start') as start, \
+             patch.object(manager,'save_state', wraps=manager.save_state) as save:
+            manager.recover();manager.recover()
+            launch.assert_not_called();start.assert_not_called();save.assert_not_called()
+        restored=manager.read(draft['id'])
+        self.assertEqual(restored['stage'],'error')
+        self.assertIn('停止自动重试',restored['error'])
+        self.assertEqual(restored['brief'],self.body['brief'])
 
     def test_transient_approval_write_failure_cannot_skip_durable_approval_on_retry(self):
         draft=self.ready();body=self.confirm_body(draft)

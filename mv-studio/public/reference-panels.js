@@ -86,7 +86,7 @@ const settingLabels = [
  * Catalogs can be replaced with setCatalogs({styles,models,agents,skills,
  * templates,actors,voices,styleCategories,actorRegions}).
  */
-export function mountReferencePanels(callbacks, initialCatalogs = {}) {
+export function mountReferencePanels(callbacks, initialCatalogs = {}, { allowModelSelection = true } = {}) {
   if (typeof callbacks?.read !== 'function') throw new Error('reference-panels 需要 read() 回调');
   const doc = globalThis.document;
   if (!doc) throw new Error('reference-panels 需要浏览器文档');
@@ -166,13 +166,13 @@ export function mountReferencePanels(callbacks, initialCatalogs = {}) {
   }
 
   function modelMarkup() {
-    const agents = state.tab === 'agents';
+    const agents = !allowModelSelection || state.tab === 'agents';
     const items = filterPanelItems(agents ? catalogs.agents : catalogs.models, state.query, state.category);
     const availableCallback = agents ? callbacks.onAgent : callbacks.onModel;
-    return `<header class="rp-header"><h2 class="rp-sr" id="${uid}-title">模型与 Agent</h2>${tabs([['models', '模型'], ['agents', 'Agent']], state.tab, 'tab')}<div class="rp-header-actions">${search('搜索模型或 Agent')}${closeButton()}</div></header><div class="rp-filter-row">${['image', 'video', 'audio'].map(value => pill(value, MEDIA_NAMES[value], state.category, 'category')).join('')}</div><main class="rp-body"><div class="rp-option-list">${items.map(item => {
+    return `<header class="rp-header"><h2 class="rp-sr" id="${uid}-title">${allowModelSelection ? '模型与 Agent' : '选择助手'}</h2>${allowModelSelection ? tabs([['models', '模型'], ['agents', 'Agent']], state.tab, 'tab') : '<strong>创作助手</strong>'}<div class="rp-header-actions">${search(allowModelSelection ? '搜索模型或 Agent' : '搜索助手')}${closeButton()}</div></header>${allowModelSelection ? `<div class="rp-filter-row">${['image', 'video', 'audio'].map(value => pill(value, MEDIA_NAMES[value], state.category, 'category')).join('')}</div>` : ''}<main class="rp-body"><div class="rp-option-list">${items.map(item => {
       const available = item.available === true && typeof availableCallback === 'function';
       return `<button class="rp-model-option" data-rp-select-model="${esc(item.id)}" ${available ? '' : 'disabled'}><span class="rp-model-icon">${icon(item.category === 'audio' ? 'music' : item.category === 'video' ? 'video' : 'spark')}</span><span><strong>${esc(item.name || item.title)}${item.badge ? `<em>${esc(item.badge)}</em>` : ''}</strong><small>${esc(item.description || item.note || '')}</small></span><span class="rp-availability">${available ? '可选择' : '尚未接入'}</span></button>`;
-    }).join('')}</div>${!items.length ? empty(agents ? '暂无可用的 Agent' : '没有匹配的模型', '连接真实执行能力后，会显示对应的可用入口。') : ''}</main><footer class="rp-footer"><p>选择只设置后续使用的能力；此面板不提交模型任务。</p></footer>`;
+    }).join('')}</div>${!items.length ? empty(agents ? '暂无可用的助手' : '没有匹配的模型', '连接真实执行能力后，会显示对应的可用入口。') : ''}</main><footer class="rp-footer"><p>选择只设置后续使用的能力，不会开始生成。</p></footer>`;
   }
 
   function instructionMarkup(template = false) {
@@ -299,7 +299,7 @@ export function mountReferencePanels(callbacks, initialCatalogs = {}) {
     const target = event.target.closest('button'); if (!target || target.disabled || state.busy) return;
     try {
       if (target.dataset.rpAction) return await action(target.dataset.rpAction);
-      if (target.dataset.rpTab) { state.tab = target.dataset.rpTab; render(); }
+      if (target.dataset.rpTab && (allowModelSelection || kind !== 'models' || target.dataset.rpTab === 'agents')) { state.tab = target.dataset.rpTab; render(); }
       if (target.dataset.rpCategory) { state.category = target.dataset.rpCategory; render(); }
       if (target.dataset.rpAssetCategory) { state.assetCategory = target.dataset.rpAssetCategory; render(); }
       if (target.dataset.rpMedia) { state.media = target.dataset.rpMedia; render(); }
@@ -316,7 +316,7 @@ export function mountReferencePanels(callbacks, initialCatalogs = {}) {
       if (target.dataset.rpToggleAsset) { const id = target.dataset.rpToggleAsset; if (state.assetSelection.has(id)) state.assetSelection.delete(id); else state.assetSelection.add(id); render(); }
       if (target.dataset.rpPreview) { state.preview = target.dataset.rpPreview; render(); }
       if (target.dataset.rpSelectModel) await busy(async () => {
-        const agents = state.tab === 'agents', item = array(agents ? catalogs.agents : catalogs.models).find(value => String(value.id) === target.dataset.rpSelectModel);
+        const agents = !allowModelSelection || state.tab === 'agents', item = array(agents ? catalogs.agents : catalogs.models).find(value => String(value.id) === target.dataset.rpSelectModel);
         const callback = agents ? callbacks.onAgent : callbacks.onModel;
         if (!item || item.available !== true || !callback) return;
         if (await callback(clone(item)) === false) throw new Error('当前能力尚未选择'); close();
@@ -355,7 +355,7 @@ export function mountReferencePanels(callbacks, initialCatalogs = {}) {
     const saved = studio(); stylePrefs = { favorites: [], recent: [], custom: [], ...saved.styleLibrary }; assetPrefs = { favorites: [], tags: {}, ...saved.assetLibrary }; settings = { ...DEFAULT_SETTINGS, ...saved.canvasSettings };
     stylePrefs.favorites = array(stylePrefs.favorites); stylePrefs.recent = array(stylePrefs.recent); stylePrefs.custom = array(stylePrefs.custom); assetPrefs.favorites = array(assetPrefs.favorites);
     const assetSelection = array(options.selectedAssets || saved.selectedAssets);
-    state = { tab: kind === 'models' ? name === 'agent' || options.tab === 'agents' ? 'agents' : 'models' : 'all', category: kind === 'models' ? options.category || 'image' : 'all', query: '', selectedStyle: selectedStyle(), library: options.library || 'assets', assetCategory: options.assetCategory || 'role', media: 'all', era: '默认', region: '默认', favoritesOnly: false, moreFilters: false, busy: false, loading: false, preview: null, materials: [], materialCache: new Map(), assetSelection: new Set(assetSelection.map(item => typeof item === 'string' ? item : String(item.id))) };
+    state = { tab: kind === 'models' ? !allowModelSelection || name === 'agent' || options.tab === 'agents' ? 'agents' : 'models' : 'all', category: kind === 'models' ? options.category || 'image' : 'all', query: '', selectedStyle: selectedStyle(), library: options.library || 'assets', assetCategory: options.assetCategory || 'role', media: 'all', era: '默认', region: '默认', favoritesOnly: false, moreFilters: false, busy: false, loading: false, preview: null, materials: [], materialCache: new Map(), assetSelection: new Set(assetSelection.map(item => typeof item === 'string' ? item : String(item.id))) };
     for (const item of assetSelection) if (typeof item === 'object' && item) { const material = normalizePanelMaterial(item); state.materialCache.set(material.id, material); }
     dialog.classList.toggle('rp-anchored', Boolean(options.anchor)); dialog.style.removeProperty('left'); dialog.style.removeProperty('top'); dialog.style.removeProperty('margin');
     render(); if (!dialog.open) dialog.showModal();

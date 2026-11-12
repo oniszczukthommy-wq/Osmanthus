@@ -66,7 +66,7 @@ class WorkflowRecoveryTests(unittest.TestCase):
     def test_uncertain_submission_cannot_treat_truthy_non_string_task_id_as_known(self):
         self.assert_blocked_without_submit(self.save(submission_started=True,task_id=True))
 
-    def test_complete_legacy_task_and_true_fresh_task_still_recover(self):
+    def test_complete_legacy_and_fresh_task_require_explicit_resume(self):
         known=self.save(task_id='provider-existing-task')
         fresh=self.save(submission_started=False)
         audio=self.save(status='done',stage='ready',download_ready=True)
@@ -74,6 +74,10 @@ class WorkflowRecoveryTests(unittest.TestCase):
         work=w.Workflow()
         with patch.object(work,'launch') as launch:
             work.recover()
+            launch.assert_not_called()
+            self.assertEqual(work.jobs[known['id']]['stage'],'error')
+            self.assertEqual(work.jobs[fresh['id']]['stage'],'error')
+            work.resume(known['id']);work.resume(fresh['id'])
             self.assertEqual({c.args[0]['id'] for c in launch.call_args_list},{known['id'],fresh['id']})
         self.assertIn(audio['id'],work.jobs)
         self.assertFalse(work.recovery_issues)

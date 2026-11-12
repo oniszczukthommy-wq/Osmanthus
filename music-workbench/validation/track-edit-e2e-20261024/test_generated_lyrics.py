@@ -15,4 +15,12 @@ class GeneratedLyricsTests(unittest.TestCase):
   with patch.object(m,'JOBS',self.root/'jobs'),patch.object(m.subprocess,'Popen',return_value=SimpleNamespace(poll=lambda:None)) as spawn:
    service=m.Lyrics();first=service.start_generated(self.job,self.audio);again=service.start_generated(self.job,self.audio)
    self.assertEqual(first['id'],again['id']);self.assertEqual(spawn.call_count,1)
+   self.assertEqual(spawn.call_args.kwargs['env']['PYTHONUTF8'],'1');self.assertIn('-X',spawn.call_args.args[0]);self.assertIn('utf8',spawn.call_args.args[0])
+ def test_retry_after_failure_starts_one_new_job(self):
+  import json
+  with patch.object(m,'JOBS',self.root/'jobs'),patch.object(m.subprocess,'Popen',return_value=SimpleNamespace(poll=lambda:None)) as spawn:
+   service=m.Lyrics();first=service.start_generated(self.job,self.audio)
+   file=m.JOBS/first['id']/'state.json';state=json.loads(file.read_text());state.update(stage='error',error='对齐未完成',created_at=state['created_at']-1);m.save_json(file,state)
+   second=service.start_generated(self.job,self.audio);again=service.start_generated(self.job,self.audio)
+   self.assertNotEqual(first['id'],second['id']);self.assertEqual(second['id'],again['id']);self.assertEqual(spawn.call_count,2)
 if __name__=='__main__':unittest.main()

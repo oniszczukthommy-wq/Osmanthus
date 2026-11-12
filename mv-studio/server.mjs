@@ -7,6 +7,8 @@ import {getOutputFormat,validateOutputDimensions} from './public/output-format.j
 import {validateCanvasDocument,createCanvasDocument,addNode} from './public/canvas-document.js';
 import {validateCanvasDrawings} from './public/canvas-preferences.js';
 import {createAliVideo} from './aliyun-video.mjs';
+import {createSeedance25Video} from './seedance25-video.mjs';
+import {createWan3Tasks} from './wan3-tasks.mjs';
 import {createMVPlanner} from './ai-mv-planner.mjs';
 import {createAIMVWorkflow} from './ai-mv-workflow.mjs';
 import {createMVDirector} from './mv-director.mjs';
@@ -21,6 +23,7 @@ import {createCanvasVision} from './canvas-vision.mjs';
 import {getOiiPromptTemplate} from './public/oiioii-canvas-catalog.js';
 import {mediaTools,readOptionalEnv} from './runtime-config.mjs';
 import {createTextUsage} from './text-usage.mjs';
+import {streamZip,validateZipEntries} from './stream-zip.mjs';
 import {localRequestAllowed} from './local-access.mjs';
 import {createMediaProcessing} from './media-processing.mjs';
 import {createLegacyPlanning} from './legacy-planning.mjs';
@@ -36,12 +39,15 @@ const json=(file,value)=>{fs.writeFileSync(file+'.tmp',JSON.stringify(value,null
 const key=process.env.MV_DISABLE_MODELS==='1'?'':process.env.DEEPSEEK_API_KEY||env.DEEPSEEK_API_KEY||'',model=process.env.DEEPSEEK_MODEL||env.DEEPSEEK_MODEL||'deepseek-flash';
 const aliKey=process.env.MV_DISABLE_MODELS==='1'?'':process.env.DASHSCOPE_API_KEY||env.DASHSCOPE_API_KEY||'';
 const textUsage=createTextUsage({data:DATA}),textFetch=textUsage.wrapFetch(globalThis.fetch);
+// Provider watermarks ship on by default. Set MV_MODEL_WATERMARK=0 only when your
+// jurisdiction and provider terms allow an unmarked AI-generated export.
+const modelWatermark=(process.env.MV_MODEL_WATERMARK??env.MV_MODEL_WATERMARK??'1')!=='0';
 const legacyPlanning=createLegacyPlanning({data:DATA,model,generate:enrich,check:textUsage.check});
-const aliVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:process.env.MV_VIDEO_MODEL||env.MV_VIDEO_MODEL||'wanx2.1-t2v-turbo',region:process.env.MV_VIDEO_REGION||env.MV_VIDEO_REGION||'cn-beijing',budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20),probe});
+const aliVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:process.env.MV_VIDEO_MODEL||env.MV_VIDEO_MODEL||'wanx2.1-t2v-turbo',region:process.env.MV_VIDEO_REGION||env.MV_VIDEO_REGION||'cn-beijing',budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20),watermark:modelWatermark,probe});
 const aiPlanner=createMVPlanner({data:DATA,key,model,fetchImpl:textFetch});
 const aiMV=createAIMVWorkflow({data:DATA,planner:aiPlanner,video:aliVideo,audioPath,probe,ffmpeg:ff});
 const tasks=new Map();
-function capability(){return{kind:'local-ai-music-video-workspace',freeRender:fs.existsSync(ff)&&fs.existsSync(fp),deepseek:!!key,aliyunVideo:aliVideo.capabilities(),canvas:{image:imageModel.capabilities(),imageVideo:imageVideo.capabilities(),speech:speechModel.capabilities(),vision:canvasVision.capabilities(),asr:canvasAudio.capabilities(),editing:fs.existsSync(ff)&&fs.existsSync(fp),visualAnalysis:!!aliKey},asr:canvasAudio.capabilities().available,platformLinks:false,comfy:{available:false,reason:'当前视频使用阿里万相API。'},sample:fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))};}
+function capability(){return{kind:'local-ai-music-video-workspace',mvDirectorAssetExport:true,mvDirectorShotRetry:true,mvDirectorRegenerateShot:true,mvDirectorMultimodel:true,mvDirectorVisualStyle:true,mvDirectorImportShots:true,mvDirectorShotPreviewImport:true,mvDirectorEditScript:true,mvDirectorAssetVersions:true,mvDirectorRelip:true,wan3:wan3?.capabilities()||{available:false,reason:'尚未启用'},freeRender:fs.existsSync(ff)&&fs.existsSync(fp),deepseek:!!key,aliyunVideo:aliVideo.capabilities(),canvas:{image:imageModel.capabilities(),imageVideo:imageVideo.capabilities(),speech:speechModel.capabilities(),vision:canvasVision.capabilities(),asr:canvasAudio.capabilities(),editing:fs.existsSync(ff)&&fs.existsSync(fp),visualAnalysis:!!aliKey},asr:canvasAudio.capabilities().available,platformLinks:false,comfy:{available:false,reason:'当前视频使用阿里万相API。'},sample:fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))};}
 function audioPath(source){if(source.id!=='sample'&&!/^[a-f0-9-]{36}\.(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(source.id))throw Error('音频来源无效');const p=source.id==='sample'?path.join(PUBLIC,'assets/sample-song.mp3'):path.join(DATA,'uploads',source.id);let stat;try{stat=fs.lstatSync(p);}catch{throw Error('找不到原音频，请重新上传');}if(!stat.isFile()||stat.isSymbolicLink())throw Error('原音频文件无效，请重新上传');return p;}
 function probe(file){return mediaProcessing.probe(file);}
 function waveform(file){return mediaProcessing.waveform(file);}
@@ -50,8 +56,8 @@ if(fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3')))waveform(path.join(
 function version(p,label,output=null){const id=uid(),v={id,createdAt:new Date().toISOString(),label,project:clone(p),output};json(path.join(DATA,'versions',id+'.json'),v);return v;}
 const activeProjectFile=path.join(DATA,'project.json'),UUID=/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const materials=createMaterialStore({data:DATA,probe,write:json});
-const imageModel=createAliImage({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4),maxBudgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4)});
-const imageVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:'wan2.6-i2v-flash',probe,budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20)});
+const imageModel=createAliImage({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4),maxBudgetCny:Number(process.env.MV_IMAGE_BUDGET_CNY||4),watermark:modelWatermark});
+const imageVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model:'wan2.6-i2v-flash',probe,budgetCny:Number(process.env.MV_VIDEO_BUDGET_CNY||20),watermark:modelWatermark});
 const speechModel=createAliSpeech({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',probe,budgetCny:1});
 const canvasPrompts=createCanvasPrompts({data:DATA,key,aliKey,visionModel:process.env.DASHSCOPE_VISION_MODEL||env.DASHSCOPE_VISION_MODEL||'qwen3.5-flash',workspace:process.env.DASHSCOPE_WORKSPACE_ID||env.DASHSCOPE_WORKSPACE_ID||'',model,materials,fetchImpl:textFetch});
 const firstFrames=createCanvasFirstFrame({data:DATA,ffmpeg:ff,probe,materials});
@@ -59,7 +65,11 @@ const canvasGeneration=createCanvasGeneration({data:DATA,image:imageModel,video:
 const canvasVision=createCanvasVision({data:DATA,resolveMaterial:id=>materials.asset(id)});
 const canvasEditor=createCanvasVideoEditor({data:DATA,ffmpeg:ff,probe,resolveAsset:resolveCanvasAsset});
 const canvasAudio=createCanvasAudioTools({data:DATA,ffmpeg:ff,probe,resolveAsset:resolveCanvasAsset});
-const mvDirector=createMVDirector({data:DATA,key,model,image:imageModel,video:imageVideo,materials,audioPath,probe,ffmpeg:ff,fetchImpl:textFetch});
+// New providers are opt-in until account access and a real end-to-end run are
+// verified. Their own budget/idempotency gates remain mandatory after opt-in.
+const seedance25=process.env.MV_DISABLE_MODELS!=='1'&&process.env.MV_ENABLE_SEEDANCE_25==='1'?createSeedance25Video({data:DATA,key:process.env.ARK_API_KEY||'',probe,materialStore:materials,budgetCny:Number(process.env.SEEDANCE_BUDGET_CNY||0),reserveCnyPerSecond:Number(process.env.SEEDANCE_RESERVE_CNY_PER_SECOND||0),allowedOutputHosts:(process.env.SEEDANCE_OUTPUT_HOSTS||'').split(',').map(x=>x.trim()).filter(Boolean)}):null;
+const wan3=process.env.MV_DISABLE_MODELS!=='1'&&process.env.MV_ENABLE_WAN3==='1'?createWan3Tasks({data:DATA,key:aliKey,workspace:process.env.DASHSCOPE_WORKSPACE_ID||'',materials,resolveAudioSource:audioPath,probe,ffmpeg:ff,budgetCny:Number(process.env.WAN3_BUDGET_CNY||20)}):null;
+const mvDirector=createMVDirector({data:DATA,key,model,image:imageModel,video:imageVideo,videoProviders:{seedance25,wan3},materials,audioPath,probe,ffmpeg:ff,fetchImpl:textFetch});
 function resolveCanvasAsset(id){
  if(UUID.test(id||'')){const local=materials.asset(id);if(local)return local;const video=aliVideo.asset(id);if(video)return video;const picture=imageModel.asset(id);if(picture)return picture;const speech=speechModel.asset(id);if(speech)return speech;}
  if(id==='sample')return{file:path.join(PUBLIC,'assets/sample-song.mp3'),kind:'audio'};
@@ -231,12 +241,71 @@ export function createServer({media=mediaProcessing}={}){const {probe,waveform}=
    return send(200,{url:`/index.html?canvas=${project.id}&director=${s.id}#canvas`});
   }
   if(method==='GET'&&route==='/api/mv-director')return send(200,{sessions:mvDirector.list()});
+  const directorExport=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/export-assets(?:\/(manifest))?$/);
+  if(method==='GET'&&directorExport){
+   const requested=u.searchParams.get('revision');if(requested!==null&&!/^(?:0|[1-9][0-9]*)$/.test(requested))return send(400,{error:'导出版本无效'});
+   const bundle=mvDirector.exportAssets(directorExport[1],requested===null?undefined:Number(requested));validateZipEntries(bundle.entries);
+   if(directorExport[2])return send(200,{manifest:bundle.manifest});
+   const signature=u.searchParams.get('signature');if(requested===null||!/^[a-f0-9]{64}$/.test(signature||''))return send(400,{error:'请先检查导出素材清单'});
+   if(signature!==bundle.manifest.signature)return send(409,{error:'素材清单已变化，请重新检查后下载'});
+   res.writeHead(200,{'Content-Type':'application/zip','Content-Disposition':'attachment; filename="Osmanthus-MV-assets.zip"','Cache-Control':'no-store','X-Content-Type-Options':'nosniff'});
+   try{await streamZip(bundle.entries,res);}catch(error){res.destroy(error);}return;
+  }
   if(method==='POST'&&route==='/api/mv-director/jobs')return send(202,{job:mvDirector.start(JSON.parse(await body(req)))});
-  if(method==='POST'&&route==='/api/mv-director/recover'){const {job_id}=JSON.parse(await body(req));return send(202,{job:mvDirector.recover(job_id)});}
+  if(method==='POST'&&route==='/api/mv-director/recover'){const {job_id,confirmed}=JSON.parse(await body(req));return send(202,{job:mvDirector.recover(job_id,{confirmed})});}
   const directorJob=route.match(/^\/api\/mv-director\/jobs\/([a-f0-9-]{36})$/);
   if(method==='GET'&&directorJob){const job=mvDirector.job(directorJob[1]);return job?send(200,{job}):send(404,{error:'找不到MV任务'});}
+  const directorRetryQuote=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/shot-retry-quote$/);
+  if(method==='GET'&&directorRetryQuote)return send(200,{estimate:mvDirector.retryQuote(directorRetryQuote[1],{failed_job_id:u.searchParams.get('job_id'),shot_id:u.searchParams.get('shot_id')})});
+  const directorRegenerateQuote=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/regenerate-quote$/);
+  if(method==='GET'&&directorRegenerateQuote)return send(200,{estimate:mvDirector.regenerateQuote(directorRegenerateQuote[1],u.searchParams.get('shot_id'))});
+  const directorRelip=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/(relip-quote|relip)$/);
+  if(directorRelip&&method==='GET'&&directorRelip[2]==='relip-quote')return send(200,{estimate:await mvDirector.relipQuote(directorRelip[1],u.searchParams.get('shot_id'))});
+  if(directorRelip&&method==='POST'&&directorRelip[2]==='relip'){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!['revision','request_id','shot_id','confirmed','confirmed_max_cost_cny'].includes(key)))return send(400,{error:'口型操作参数无效'});
+    return send(202,{job:await mvDirector.startRelip({...payload,session_id:directorRelip[1]})});
+  }
   const directorSession=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})(\/quote)?$/);
   if(method==='GET'&&directorSession){const session=mvDirector.get(directorSession[1]);if(!session)return send(404,{error:'找不到MV方案'});return send(200,directorSession[2]?{estimate:mvDirector.quote(session.id,u.searchParams.get('kind'))}:{session});}
+  const directorLyrics=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/lyrics$/);
+  if(method==='POST'&&directorLyrics){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    return send(200,{session:mvDirector.setLyrics(directorLyrics[1],payload)});
+  }
+  const directorImportShot=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/import-shot$/);
+  if(method==='POST'&&directorImportShot){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!['revision','shot_id','material_id'].includes(key)))return send(400,{error:'镜头导入参数无效'});
+    return send(200,{session:await mvDirector.importShot({...payload,session_id:directorImportShot[1]})});
+  }
+  const directorShotPreview=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/shot-preview$/);
+  if(method==='POST'&&directorShotPreview){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!['revision','shot_id','material_id'].includes(key)))return send(400,{error:'镜头参考图参数无效'});
+    return send(200,{session:mvDirector.importShotPreview({...payload,session_id:directorShotPreview[1]})});
+  }
+  const directorSelectImport=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/select-import$/);
+  if(method==='POST'&&directorSelectImport){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!['revision','shot_id','version_id'].includes(key)))return send(400,{error:'镜头版本参数无效'});
+    return send(200,{session:await mvDirector.selectImportedShot({...payload,session_id:directorSelectImport[1]})});
+  }
+  const directorEditScript=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/edit-script$/);
+  if(method==='POST'&&directorEditScript){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!['revision','shots'].includes(key)))return send(400,{error:'脚本编辑参数无效'});
+    return send(200,{session:await mvDirector.editScript({...payload,session_id:directorEditScript[1]})});
+  }
+  const directorAssetRoute=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/(asset-candidates|asset-select|assets-confirm)$/);
+  if(method==='POST'&&directorAssetRoute){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    const action=directorAssetRoute[2];
+    const allowed=action==='asset-candidates'?['revision','entity_id','material_id']:action==='asset-select'?['revision','entity_id','version_id']:['revision'];
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!allowed.includes(key)))return send(400,{error:'素材操作参数无效'});
+    const methodName=action==='asset-candidates'?'addAssetCandidate':action==='asset-select'?'selectAssetVersion':'confirmAssets';
+    return send(200,{session:mvDirector[methodName]({...payload,session_id:directorAssetRoute[1]})});
+  }
   if(method==='POST'&&route==='/api/ai-mv/plan'){
    const {project,request_id,instruction,duration=10,start=project?.start,ratio=project?.studio?.ratio||'16:9'}=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
    validateServerProject(project);if(project.source.id==='sample')return send(400,{error:'请先选择自己的歌曲或上传音频'});
@@ -348,6 +417,8 @@ export function createServer({media=mediaProcessing}={}){const {probe,waveform}=
    const generatedSpeech=route.match(/^\/files\/aliyun-speech\/([a-f0-9-]{36})\/audio\.wav$/);if(generatedSpeech){const asset=speechModel.asset(generatedSpeech[1]);return asset?serveFile(req,res,asset.file,'audio/wav'):send(404,{error:'语音不存在'});}
    const visionFile=route.match(/^\/files\/canvas-vision\/([a-f0-9-]{36})\/([A-Za-z0-9_.-]+\.png)$/);if(visionFile){const asset=canvasVision.asset(visionFile[1],visionFile[2]);return asset?serveFile(req,res,asset.file,'image/png'):send(404,{error:'图片不存在'});}
    const localEdit=route.match(/^\/files\/(canvas-edits|canvas-audio)\/([a-f0-9-]{36})\/(video\.mp4|audio\.wav)$/);if(localEdit){const record=localEdit[1]==='canvas-edits'?canvasEditor.get(localEdit[2]):canvasAudio.get(localEdit[2]);if(!record||record.status!=='ready'||localEdit[3]!== (localEdit[1]==='canvas-edits'?'video.mp4':'audio.wav'))return send(404,{error:'素材不存在'});return serveFile(req,res,path.join(DATA,localEdit[1],localEdit[2],localEdit[3]));}
+   const providerMedia=route.match(/^\/files\/(seedance25-video|wan3-tasks)\/([a-f0-9-]{36})\/video\.mp4$/);
+   if(providerMedia){const provider=providerMedia[1]==='wan3-tasks'?wan3:seedance25;const asset=provider?.asset(providerMedia[2]);return asset?serveFile(req,res,asset.file,'video/mp4'):send(404,{error:'镜头尚未生成或校验未通过'});}
    const aliMedia=route.match(/^\/files\/aliyun-video\/([a-f0-9-]{36})\/video\.mp4$/);
    if(aliMedia){const asset=aliVideo.asset(aliMedia[1]);if(!asset)return send(404,{error:'镜头尚未生成或校验未通过'});return serveFile(req,res,asset.file,'video/mp4');}
    const aiPoster=route.match(/^\/files\/ai-mv-jobs\/([a-f0-9-]{36})\/shot-([12])\.jpg$/);

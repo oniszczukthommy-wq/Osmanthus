@@ -3,11 +3,14 @@ from pathlib import Path
 from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 import numpy as np
 from mv_bridge import MVHandoffs,proxy_mv
+from runtime_support import media_binary
+
+FFMPEG=media_binary('ffmpeg')
 
 class HandoffsTest(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.root=Path(self.temp.name)
-        self.bridge=MVHandoffs(self.root,Path(__file__).parent.parent/'audiocraft/conda-env/bin/ffmpeg')
+        self.bridge=MVHandoffs(self.root,FFMPEG)
         self.body={'request_id':'10000000-0000-4000-8000-000000000001','project_id':'20000000-0000-4000-8000-000000000002','source_kind':'current_mix','revision':4,'fingerprint':'f'*64}
     def tearDown(self):self.temp.cleanup()
     def resolve(self,intent):
@@ -15,13 +18,16 @@ class HandoffsTest(unittest.TestCase):
             sr=8000
             def mix(self):return np.column_stack([np.sin(np.arange(25600)*.3)*.1]*2).astype('float32')
         return {**intent,'title':'测试歌曲','duration':3.2,'lyrics':'这句歌不能丢','timed_lyrics':[],'snapshot':Snapshot()}
+    @unittest.skipUnless(FFMPEG.is_file(),'需要安装 FFmpeg 才能验证混音编码')
     def test_current_mix_and_idempotency(self):
         first=self.bridge.create(self.body,self.resolve);second=self.bridge.create(self.body,lambda _:self.fail('duplicate rendered again'))
         self.assertEqual(first,second);self.assertEqual(first['revision'],4);self.assertEqual(first['lyrics'],'这句歌不能丢');self.assertNotIn('audio_file',first)
         self.assertEqual(hashlib.sha256(self.bridge.audio(first['id']).read_bytes()).hexdigest(),first['audio_sha256'])
+    @unittest.skipUnless(FFMPEG.is_file(),'需要安装 FFmpeg 才能验证混音编码')
     def test_conflicting_request_does_not_replace_audio(self):
         self.bridge.create(self.body,self.resolve)
         with self.assertRaises(RuntimeError):self.bridge.create({**self.body,'revision':5},self.resolve)
+    @unittest.skipUnless(FFMPEG.is_file(),'需要安装 FFmpeg 才能验证混音编码')
     def test_mutated_audio_is_not_reused(self):
         first=self.bridge.create(self.body,self.resolve);self.bridge.audio(first['id']).write_bytes(b'changed')
         with self.assertRaises(RuntimeError):self.bridge.create(self.body,self.resolve)

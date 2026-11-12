@@ -62,7 +62,7 @@ export function createBudgetLock({root,label='生成',codePrefix='BUDGET'}={}) {
     }catch{return {available:false,state:'unavailable',recoveryNeeded:true,reason:`${label}预算锁无法校验，已停止新提交；请检查目录权限并按 docs/budget-lock-recovery.md 恢复`};}
   }
   const blocked=state=>Object.assign(new Error(state.reason),{status:409,code:codePrefix+'_BUDGET_LOCKED',retryBlocked:true,budgetLock:state});
-  function run(operation){
+  function acquire(){
     assertRoot();const token=crypto.randomUUID(),filename=`owner-${process.pid}-${token}.json`;let acquired=false;
     for(let attempt=0;attempt<3&&!acquired;attempt++){
       try{fs.mkdirSync(lock,{mode:0o700});acquired=true;}
@@ -73,10 +73,11 @@ export function createBudgetLock({root,label='生成',codePrefix='BUDGET'}={}) {
     // deliberately left blocked for explicit offline recovery.
     const file=path.join(lock,filename),fd=fs.openSync(file,'wx',0o600);
     try{fs.writeFileSync(fd,JSON.stringify({schema:SCHEMA,pid:process.pid,host:os.hostname(),token}));fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
-    const owned={stat:fs.lstatSync(lock),filename};
-    try{return operation();}finally{discardOwner(owned);}
+    const owned={stat:fs.lstatSync(lock),filename};let released=false;
+    return ()=>{if(released)return;try{discardOwner(owned);}catch(error){if(error.code!=='ENOENT')throw error;}released=true;};
   }
-  return {run,status};
+  function run(operation){const release=acquire();try{return operation();}finally{release();}}
+  return {run,status,acquire};
 }
 
 /** Explicit local maintenance only. No HTTP endpoint calls this operation.

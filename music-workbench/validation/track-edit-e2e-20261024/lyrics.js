@@ -14,10 +14,23 @@ export function lineAt(lines,time){
   return !lines[found].intervals||lines[found].intervals.some(([start,end])=>start<=time&&time<end)?found:-1;
 }
 
+export function lyricSyncMessage(selected,job,isCurrent,waitingForAudio=false){
+  if(!isCurrent)return '播放这首歌后准备歌词同步';
+  if(selected?.instrumental)return '';
+  if(selected?.kind==='generation')return '歌曲音频就绪后准备歌词同步';
+  if(job?.stage==='ready')return Array.isArray(job.lines)&&job.lines.length?'':'歌词时间轴为空，暂无法跟随';
+  if(['error','interrupted'].includes(job?.stage))return `歌词暂无法跟随：${job.error||'同步未完成'}`;
+  if(waitingForAudio)return '音频就绪后自动准备歌词同步';
+  return '正在准备歌词同步…';
+}
+export function lyricScrollTop(surface,row){
+  return Math.max(0,surface.scrollTop+row.getBoundingClientRect().top-surface.getBoundingClientRect().top-surface.clientHeight/2+row.clientHeight/2);
+}
+
 export function initializeLyrics({getProject,transport}){
   const box=el('lyric-lines'),preview=el('generation-audio');
   let sourceKey='',textKey='',lines=[],rows=[],active=-1,follow=true,job=null,pollAt=0,fetching=false,serial=0,lastTick=0;
-  let failed=false,source=null,previousLine=-1;
+  let failed=false,source=null,previousLine=-1,waitingForAudio=false;
   const clock=n=>`${String(Math.floor(n/60)).padStart(2,'0')}:${String(Math.floor(n%60)).padStart(2,'0')}`;
   function status(text){if(el('lyric-status').textContent!==text)el('lyric-status').textContent=text;}
   function setFollow(value){follow=value;el('lyric-follow').setAttribute('aria-pressed',String(value));el('lyric-follow').textContent=value?'跟随演唱：开':'跟随演唱：关';if(value)center(active>=0?active:previousLine);}
@@ -31,7 +44,7 @@ export function initializeLyrics({getProject,transport}){
     box.replaceChildren(...rows);box.scrollTop=0;
     if(!rows.length){const p=document.createElement('p');p.textContent='正在生成歌词…';box.append(p);}
   }
-  function setTiming(timing){lines=timing?.stage==='ready'?timing.lines:[];
+  function setTiming(timing){lines=timing?.stage==='ready'&&Array.isArray(timing.lines)?timing.lines:[];
     rows.forEach((row,index)=>{row.disabled=!lines[index];row.title=lines[index]?`定位到 ${clock(lines[index].start)}`:'';});
     el('lyric-retry').hidden=!failed;
   }
@@ -41,7 +54,8 @@ export function initializeLyrics({getProject,transport}){
       const r=await fetch(path,{signal:AbortSignal.timeout(12000)});const value=await r.json();if(!r.ok)throw Error(value.error||'暂时无法读取歌词');
       if(token!==serial)return;
       showText(value.lyrics);job=value.job;
-      if(!job&&value.can_align===false){status('音频就绪后自动准备歌词同步');pollAt=performance.now()+2000;return;}
+      waitingForAudio=!job&&value.can_align===false;
+      if(waitingForAudio){failed=false;setTiming(null);status('音频就绪后自动准备歌词同步');pollAt=performance.now()+2000;return;}
       if(!job){const result=await fetch(expected.kind==='candidate'?path:'/api/lyrics/jobs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({project_id:expected.id}),signal:AbortSignal.timeout(12000)});
         const created=await result.json();if(!result.ok)throw Error(created.error||'歌词同步暂未启动');if(token!==serial)return;job=created;}
       failed=['error','interrupted'].includes(job.stage);setTiming(job);
@@ -54,16 +68,31 @@ export function initializeLyrics({getProject,transport}){
   function paintSurfaces(selected,index){
     for(const surface of document.querySelectorAll('[data-lyrics-song]')){
       const current=surface.dataset.lyricsSong===selected.id,at=current?index:-1,stamp=selected.key+':'+at;
+      const heading=surface.parentElement?.querySelector('.studio-detail-lyric-heading');
+      if(heading){
+        let notice=surface.parentElement.querySelector('[data-lyric-sync-status]');
+        if(!notice){notice=document.createElement('p');notice.className='studio-status';notice.dataset.lyricSyncStatus='';notice.setAttribute('role','status');heading.insertAdjacentElement('afterend',notice);}
+        const button=heading.querySelector('[data-lyrics-follow]');
+        const visibleJob=job||(failed?{stage:'error',error:el('lyric-status').textContent}:null);
+        const message=button?lyricSyncMessage(selected,visibleJob,current,waitingForAudio):'';
+        if(notice.textContent!==message)notice.textContent=message;
+        notice.hidden=!message;
+        if(button){button.disabled=!!message;button.title=message||'跟随当前演唱歌词';}
+        let retry=surface.parentElement.querySelector('[data-lyric-sync-retry]');
+        if(!retry){retry=document.createElement('button');retry.type='button';retry.dataset.lyricSyncRetry='';retry.textContent='重试歌词同步';retry.addEventListener('click',()=>el('lyric-retry').click());notice.insertAdjacentElement('afterend',retry);}
+        retry.hidden=!button||!current||!failed||!message;
+        retry.disabled=fetching;
+      }
       if(surface.dataset.lyricStamp===stamp)continue;surface.dataset.lyricStamp=stamp;
       for(const row of surface.querySelectorAll('[data-lyric-index]')){const active=current&&Number(row.dataset.lyricIndex)===at;row.classList.toggle('is-active',active);if(active)row.setAttribute('aria-current','true');else row.removeAttribute('aria-current');}
-      if(at>=0&&surface.dataset.follow!=='false'){const row=surface.querySelector('[data-lyric-index="'+at+'"]');if(row)surface.scrollTo({top:Math.max(0,row.offsetTop-surface.clientHeight/2+row.clientHeight/2),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});}
+      if(at>=0&&surface.dataset.follow!=='false'){const row=surface.querySelector('[data-lyric-index="'+at+'"]');if(row)surface.scrollTo({top:lyricScrollTop(surface,row),behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth'});}
     }
   }
   document.addEventListener('wheel',event=>{const surface=event.target.closest?.('[data-lyrics-song]');if(surface){surface.dataset.follow='false';const button=surface.parentElement.querySelector('[data-lyrics-follow]');button?.setAttribute('aria-pressed','false');}},{passive:true});
   document.addEventListener('click',event=>{const button=event.target.closest?.('[data-lyrics-follow]');if(!button)return;const surface=button.parentElement.parentElement.querySelector('[data-lyrics-song]');if(!surface)return;const follow=surface.dataset.follow==='false';surface.dataset.follow=String(follow);button.setAttribute('aria-pressed',String(follow));delete surface.dataset.lyricStamp;});
   function paint(now){requestAnimationFrame(paint);if(now-lastTick<80)return;lastTick=now;
     const selected=choose();if(!selected)return;source=selected;
-    if(selected.key!==sourceKey){sourceKey=selected.key;serial++;fetching=false;failed=false;job=null;lines=[];pollAt=0;
+    if(selected.key!==sourceKey){sourceKey=selected.key;serial++;fetching=false;failed=false;waitingForAudio=false;job=null;lines=[];pollAt=0;
       if(rows[active]){rows[active].classList.remove('singing');rows[active].removeAttribute('aria-current');}active=-1;previousLine=-1;
       showText(selected.lyrics||'');setTiming(null);setFollow(true);el('lyric-title').textContent=selected.title;status(selected.kind==='project'?'正在读取这首歌的歌词…':'正在生成歌词…');}
     el('lyric-follow').disabled=!!selected.instrumental;

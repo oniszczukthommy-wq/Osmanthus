@@ -77,8 +77,14 @@ test('服务重启将未完成任务标记失败且不自动执行，损坏成�
  const another=await f.editor.render(f.request());assert.equal(another.status,'ready',another.error);fs.appendFileSync(output(f,another),'corrupt');assert.throws(()=>f.editor.get(another.id),/校验失败/);
 });
 
-test('素材解析只接受本机普通媒体文件；编码失败留下可查询任务且原片不变',async t=>{
- const f=fixture(t),original=hash(f.files.red),link=path.join(f.data,'link.mp4');fs.symlinkSync(f.files.red,link);const unsafe=createCanvasVideoEditor({...f.config,resolveAsset:()=>({file:link})});await assert.rejects(()=>unsafe.render(f.request()),/普通文件/);
+test('素材解析拒绝符号链接',async t=>{
+ const f=fixture(t),link=path.join(f.data,'link.mp4');
+ try{fs.symlinkSync(f.files.red,link);}catch(error){if(error?.code==='EPERM'||error?.code==='EACCES')return t.skip('当前系统不允许创建符号链接');throw error;}
+ const unsafe=createCanvasVideoEditor({...f.config,resolveAsset:()=>({file:link})});await assert.rejects(()=>unsafe.render(f.request()),/普通文件/);
+});
+
+test('编码失败留下可查询任务且原片不变',async t=>{
+ const f=fixture(t),original=hash(f.files.red);
  const failed=createCanvasVideoEditor({...f.config,ffmpeg:path.join(f.data,'missing-ffmpeg')}),job=await failed.render(f.request());assert.equal(job.status,'failed');assert.match(job.error,/编码器无法启动/);assert.equal(failed.get(job.id).status,'failed');assert.equal(hash(f.files.red),original);
 });
 

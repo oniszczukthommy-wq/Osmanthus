@@ -89,13 +89,19 @@ await test('empty-candidate failure renders real recovery button and disappears 
  await children['[data-batch-resume]'].onclick();assert.deepEqual(resumed,[id]);
  context.creations=[];vm.runInNewContext('renderBatches();',context);assert.equal(removed,true);assert.equal(nodes.size,0);
 });
-await test('waiting stages stay quiet while playable results and errors remain visible',async()=>{
+await test('waiting stages show progress while playable results and errors take priority',async()=>{
  assert.match(creationProgress({candidates:[{media:{stream:'/stream'}}]}),/可试听/);
  assert.match(candidateProgress({media:{stream:'/stream'}},'正在生成'),/可试听/);
  assert.equal(creationProgress({candidates:[{status:'done'}]}),'');
- assert.equal(creationProgress({stage:'lyrics',candidates:[]}),'');
- assert.equal(candidateProgress({stage:'queued'},'模型生成中'),'');
- assert.equal(candidateProgress({stage:'generating'},'模型生成中'),'');
+ assert.match(creationProgress({stage:'lyrics',candidates:[]}),/准备歌词/);
+ assert.match(creationProgress({stage:'submitting',candidates:[]}),/提交/);
+ assert.match(creationProgress({stage:'preparing',candidates:[]}),/准备编辑音轨/);
+ assert.match(candidateProgress({stage:'queued'},''),/排队/);
+ assert.match(candidateProgress({stage:'generating'},''),/生成/);
+ assert.match(candidateProgress({stage:'separating'},''),/分轨/);
+ assert.match(creationProgress({stage:'generating',candidates:[{media:{stream:'/stream'}}]}),/可试听/);
+ assert.equal(creationProgress({stage:'generating',error:'生成未完成',candidates:[{media:{stream:'/stream'}}]}),'生成未完成');
+ assert.equal(candidateProgress({stage:'error',media:{stream:'/stream'}},'失败'),'失败');
  assert.match(creationProgress({candidates:[{media:{complete:'/a'}},{media:{complete:'/b'}}]}),/试听并选择/);
  assert.equal(creationProgress({error:'本次生成失败'}),'本次生成失败');
 });
@@ -171,7 +177,7 @@ await test('lyrics lock during confirmation and a late response never closes ano
 });
 await test('detail play controls reflect play and pause without changing queue cover buttons',async()=>{
  const attrs=new Map(),button={dataset:{songPlay:id},getAttribute:k=>attrs.get(k),setAttribute:(k,v)=>attrs.set(k,v)},context={all:selector=>selector==='[data-detail-play]'?[button]:[],songMetadata:()=>({title:'song'})};
- const fn=source.slice(source.indexOf('function applyPlaybackState('),source.indexOf('async function playSong('));vm.runInNewContext(fn,context);context.applyPlaybackState({id,playing:true});assert.equal(attrs.get('aria-pressed'),'true');assert.match(button.innerHTML,/暂停/);context.applyPlaybackState({id,playing:false});assert.equal(attrs.get('aria-pressed'),'false');assert.match(button.innerHTML,/播放/);
+ const fn=source.slice(source.indexOf('function applyPlaybackState('),source.indexOf('async function playSong('));vm.runInNewContext(fn,context);context.applyPlaybackState({id,playing:true});assert.equal(attrs.get('aria-pressed'),'true');assert.match(button.innerHTML,/data-lucide="pause"/);assert.equal(button.title,'暂停');context.applyPlaybackState({id,playing:false});assert.equal(attrs.get('aria-pressed'),'false');assert.match(button.innerHTML,/data-lucide="play"/);assert.equal(button.title,'播放');
 });
 await test('candidate like buttons reflect favorites immediately and after unliking',async()=>{
  const attrs=new Map(),button={dataset:{songFavorite:id},setAttribute:(k,v)=>attrs.set(k,v)},favorites=new Set([id]),context={all:()=>[button],favorites,songMetadata:()=>({title:'song'})};
@@ -191,7 +197,7 @@ await test('correcting creation input clears only its own stale error, preservin
  context.creationFormError='old creation error';nodes['studio-global-status'].textContent='new export error';context.clearCreationFormError();assert.equal(nodes['studio-global-status'].textContent,'new export error');
 });
 await test('changing routes dismisses stale global and dialog errors without relying on polling',async()=>{
- const cleared=[],element={hidden:false},context={status:(text,error)=>cleared.push([text,error]),creationFormError:'old',navigation:0,pendingEditor:{},page:'create',closeDrawers:()=>{},$:()=>({close:()=>{}}),root:{classList:{remove:()=>{},add:()=>{}}},q:()=>element,all:()=>[],window:{scrollTo:()=>{}}};
+ const cleared=[],element={hidden:false},context={status:(text,error)=>cleared.push([text,error]),creationFormError:'old',navigation:0,pendingEditor:{},page:'create',pauseStylePreview:()=>{},closeDrawers:()=>{},$:()=>({close:()=>{}}),root:{classList:{remove:()=>{},add:()=>{}}},q:()=>element,all:()=>[],window:{scrollTo:()=>{}}};
  const fn=source.slice(source.indexOf('function navigate('),source.indexOf('function home('));vm.runInNewContext(fn,context);context.navigate('editor');assert.deepEqual(cleared,[['',false]]);assert.equal(context.creationFormError,null);assert.equal(context.page,'editor');
 });
 await test('hidden legacy recovery still resolves before a new lyric draft and never resends old music',async()=>{

@@ -71,6 +71,25 @@ def prompts(batch):
 def definitely_failed(job):
     return any(e.get('type')=='provider_status' and e.get('status') in ('fail','cancelled') for e in job.get('events',[]))
 
+def second_waits_for_first_result(first, second):
+    """Never launch a new B while A may have been accepted without a task ID.
+
+    An already submitted B remains eligible for recovery; a confirmed A result
+    or explicit provider failure keeps the existing scheduling behavior.
+    """
+    first_completed=first.get('download_ready') or (first.get('status')=='done' and first.get('audio_url'))
+    first_unknown=first.get('submission_started') and not first.get('task_id') and not first_completed and not definitely_failed(first)
+    second_started=(second.get('submission_started') or second.get('task_id') or second.get('download_ready')
+                    or (second.get('status')=='done' and second.get('audio_url')))
+    return bool(first_unknown and not second_started)
+
+def candidate_needs_restart_resume(job, selected):
+    """A restart never silently continues nonterminal provider or audio work."""
+    stage=job.get('stage')
+    if stage in ('ready','error'):return False
+    if job.get('download_ready') and not selected:return False
+    return stage!='awaiting_selection' or bool(selected)
+
 class GenerationPairs:
     def __init__(self,workflow,directory=None):
         self.workflow=workflow;self.lock=workflow.lock
@@ -101,6 +120,14 @@ class GenerationPairs:
     def public(self,batch):
         with self.lock:
             result={k:copy.deepcopy(batch.get(k)) for k in ('id','title','brief','style','voice','lyrics','instrumental','created_at','policy','error','selected_candidate_id','creation_request_id','creation_mode')}
+            first=self.workflow.jobs.get(batch.get('candidate_ids',{}).get('A'),{})
+            second=self.workflow.jobs.get(batch.get('candidate_ids',{}).get('B'),{})
+            second_blocked=bool(first and second and first.get('stage')=='error' and second_waits_for_first_result(first,second))
+            restart_paused=bool(batch.get('restart_paused'))
+            if second_blocked:
+                result['error']='方案 A 的提交结果尚未确认，方案 B 已暂停；请先核对原任务，避免重复扣费。'
+            elif restart_paused:
+                result['error']='服务重启后任务已暂停；请检查原任务，再选择恢复。'
             candidates=[]
             for slot,identifier in batch.get('candidate_ids',{}).items():
                 job=self.workflow.jobs.get(identifier)
@@ -120,19 +147,25 @@ class GenerationPairs:
                     media={'stream':f'/api/generation/media/{identifier}/stream' if job.get('pipe_url') else None,
                            'complete':f'/api/generation/media/{identifier}/complete' if job.get('download_ready') else None,
                            'preview_complete':f'/api/generation/media/{identifier}/preview-complete' if job.get('status')=='done' and job.get('audio_url') else None})
+                if second_blocked and slot=='B':
+                    value.update(stage='paused',status='paused',error='等待核对方案 A 的提交结果',can_resume=False,can_retry_generation=False)
+                elif restart_paused and candidate_needs_restart_resume(job,identifier==batch.get('selected_candidate_id')):
+                    value.update(stage='paused',status='paused',error='服务重启后已暂停，请检查后恢复',can_resume=False,can_retry_generation=False)
                 candidates.append(value)
             result['candidates']=candidates
             selected=self.workflow.jobs.get(batch.get('selected_candidate_id'))
-            if selected:
+            if restart_paused and selected and candidate_needs_restart_resume(selected,True):result['stage']='paused'
+            elif selected:
                 result['stage']='ready' if selected.get('stage')=='ready' else 'preparation_error' if selected.get('stage')=='error' else 'preparing'
+            elif second_blocked:result['stage']='error'
             elif candidates:
                 available=any(c['can_select'] for c in candidates)
                 settled=all(c['stage'] in ('awaiting_selection','error') for c in candidates)
                 result['stage']='awaiting_selection' if settled and available else 'error' if settled else 'partially_available' if available else 'generating'
             else:result['stage']=batch['stage']
             result['project_id']=selected['id'] if selected and selected.get('stage')=='ready' else None
-            result['generation_in_progress']=any(c['stage'] not in ('awaiting_selection','error','ready') and not c.get('download_ready') for c in candidates)
-            result['can_resume_batch']=not candidates and batch['id'] not in self.drafting
+            result['generation_in_progress']=any(c['stage'] not in ('awaiting_selection','error','ready','paused') and not c.get('download_ready') for c in candidates)
+            result['can_resume_batch']=bool((not candidates or (restart_paused and not second_blocked and not batch.get('recovery_errors'))) and batch['id'] not in self.drafting)
             return result
 
     def list(self):
@@ -220,6 +253,7 @@ class GenerationPairs:
         with self.lock:
             first=self.workflow.jobs[batch['candidate_ids']['A']]
             second=self.workflow.jobs[batch['candidate_ids']['B']]
+            if second_waits_for_first_result(first,second):return False
             already_submitted=second.get('submission_started') or second.get('task_id') or second.get('download_ready')
             first_finished=(first.get('status')=='done' and bool(first.get('audio_url'))) or first.get('download_ready')
             first_failed=definitely_failed(first) or (first.get('stage')=='error' and first['id'] not in self.workflow.running)
@@ -233,7 +267,10 @@ class GenerationPairs:
         if batch.get('recovery_errors'):return
         if batch.get('schedule')!=SCHEDULE:
             # Existing batches retain their identities and recovery behavior.
-            for identifier in batch['candidate_ids'].values():self.launch_candidate(self.workflow.jobs[identifier])
+            first=self.workflow.jobs[batch['candidate_ids']['A']]
+            second=self.workflow.jobs[batch['candidate_ids']['B']]
+            self.launch_candidate(first)
+            if not second_waits_for_first_result(first,second):self.launch_candidate(second)
             return
         self.launch_candidate(self.workflow.jobs[batch['candidate_ids']['A']])
         if not self.release_second(batch):self.launch_sequence(batch)
@@ -247,6 +284,10 @@ class GenerationPairs:
             try:
                 while not self.stopping.is_set():
                     if self.release_second(batch):return
+                    with self.lock:
+                        first=self.workflow.jobs[batch['candidate_ids']['A']]
+                        second=self.workflow.jobs[batch['candidate_ids']['B']]
+                        if first.get('stage')=='error' and second_waits_for_first_result(first,second):return
                     self.stopping.wait(.5)
             except Exception as error:
                 with self.lock:batch.update(error=str(error)[:700]);self.save(batch)
@@ -267,6 +308,8 @@ class GenerationPairs:
     def resume(self,identifier):
         with self.lock:
             batch=self.read(identifier)
+            if batch.pop('restart_paused',False):
+                self.save(batch)
             if not batch.get('candidate_ids'):
                 batch.update(stage='lyrics',error=None);self.save(batch);self.launch_draft(batch)
             else:
@@ -314,7 +357,20 @@ class GenerationPairs:
             return self.public(batch)
 
     def recover(self):
-        # Only this manager restores candidates; legacy recovery skips batch jobs.
-        for identifier,batch in list(self.batches.items()):
-            if batch.get('stage')=='error' and not batch.get('candidate_ids'):continue
-            self.resume(identifier)
+        # Startup must never create new paid requests. Keep existing results and
+        # ask the user to explicitly resume interrupted provider/local work.
+        with self.lock:
+            for batch in self.batches.values():
+                if not batch.get('candidate_ids'):
+                    if batch.get('stage')!='error':
+                        batch.update(stage='error',error='服务重启后创作已暂停，请检查后恢复。',restart_paused=True)
+                        self.save(batch)
+                    continue
+                if not self.ensure_candidates(batch):continue
+                selected=batch.get('selected_candidate_id')
+                if any(candidate_needs_restart_resume(self.workflow.jobs[candidate_id],candidate_id==selected)
+                       for candidate_id in batch['candidate_ids'].values()):
+                    batch['restart_paused']=True
+                    self.save(batch)
+                elif batch.pop('restart_paused',False):
+                    self.save(batch)

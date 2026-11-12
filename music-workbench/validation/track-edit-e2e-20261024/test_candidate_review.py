@@ -71,6 +71,61 @@ class CandidateReviewTests(unittest.TestCase):
                 'candidate_id':(self.part if kind=='arrangement' else self.voice)['id'],
                 'preview_start_seconds':2.,'preview_end_seconds':4.}
 
+    def segment_body(self,mode='gain',gain_db=-6):
+        return {'project_id':self.p.state['id'],'revision':self.p.state['revision'],'kind':'segment',
+                'segment':{'track_id':'drums','start_seconds':2.,'end_seconds':4.,'mode':mode,'gain_db':gain_db},
+                'preview_start_seconds':2.,'preview_end_seconds':4.}
+
+    def test_segment_preview_matches_committed_override_after_existing_mute(self):
+        self.p.apply({'type':'segment_gain','track_id':'drums','start_seconds':1.,'end_seconds':3.,'mode':'mute','gain_db':0},'test',0,compact=True)
+        before=self.p.mix();saved=self.p.file.read_bytes();state=deepcopy(self.p.state)
+        review=self.reviews.prepare(self.p,self.segment_body())
+        self.assertEqual(self.p.file.read_bytes(),saved);self.assertEqual(self.p.state,state)
+        self.assertEqual(review['matching']['candidate_gain'],1.)
+        self.assertTrue(review['checks']['outside_range_sample_identical'])
+        expected,sr=sf.read(self.reviews.asset(review['id'],'candidate.wav'),dtype='float32',always_2d=True)
+        cmd=self.reviews.validated_command(self.p,review['id'],{'project_id':self.p.state['id'],'revision':self.p.state['revision']})
+        self.p.apply(cmd,'candidate-review',self.p.state['revision'],compact=True)
+        after=self.p.mix();a,b=2*sr,4*sr
+        self.assertTrue(np.array_equal(before[:a],after[:a]));self.assertTrue(np.array_equal(before[b:],after[b:]))
+        self.assertTrue(np.allclose(expected,after*review['matching']['common_peak_gain'],atol=2**-22))
+        self.p.move_history('undo',self.p.state['revision']);self.assertTrue(np.array_equal(self.p.mix(),before))
+
+    def test_segment_preview_allows_explicit_adjustment_when_track_muted(self):
+        self.p.apply({'type':'track_enabled','track_id':'drums','enabled':False},'test',0,compact=True)
+        review=self.reviews.prepare(self.p,self.segment_body('mute',0))
+        self.assertFalse(review['checks']['audible_mix_changed']);self.assertTrue(review['can_apply'])
+        self.assertTrue(any('没有变化' in message for message in review['warnings']))
+        cmd=self.reviews.validated_command(self.p,review['id'],{'project_id':self.p.state['id'],'revision':self.p.state['revision']})
+        self.p.apply(cmd,'candidate-review',self.p.state['revision'],compact=True)
+        self.assertTrue(self.p.state['tracks']['drums']['muted'])
+
+    def test_full_volume_overrides_old_mute_without_unmuting_the_track(self):
+        self.p.apply({'type':'segment_gain','track_id':'drums','start_seconds':1.,'end_seconds':5.,'mode':'mute','gain_db':0},'test',0,compact=True)
+        self.p.apply({'type':'track_enabled','track_id':'drums','enabled':False},'test',1,compact=True)
+        before=self.p.render_track('drums').copy();review=self.reviews.prepare(self.p,self.segment_body('gain',0))
+        cmd=self.reviews.validated_command(self.p,review['id'],{'project_id':self.p.state['id'],'revision':self.p.state['revision']})
+        self.p.apply(cmd,'candidate-review',self.p.state['revision'],compact=True)
+        after=self.p.render_track('drums');a,b=2*self.p.sr,4*self.p.sr
+        self.assertTrue(np.array_equal(before[:a],after[:a]));self.assertTrue(np.array_equal(before[b:],after[b:]))
+        self.assertGreater(float(np.max(np.abs(after[a:b]))),0.)
+        self.assertTrue(self.p.state['tracks']['drums']['muted'])
+        self.assertIn('音量 100%',self.p.state['history'][-1]['label'])
+
+    def test_segment_preview_warns_but_allows_existing_clipped_mix(self):
+        self.p.audio['drums']*=80
+        review=self.reviews.prepare(self.p,self.segment_body())
+        self.assertGreater(review['checks']['candidate_mix_peak'],1.)
+        self.assertTrue(review['can_apply']);self.assertLess(review['matching']['common_peak_gain'],1.)
+        self.assertTrue(any('失真' in message for message in review['warnings']))
+
+    def test_segment_preview_rejects_unsafe_or_stale_request(self):
+        body=self.segment_body();body['segment']['mode']='restore'
+        with self.assertRaises(ValueError):self.reviews.prepare(self.p,body)
+        review=self.reviews.prepare(self.p,self.segment_body())
+        self.p.apply({'type':'track_enabled','track_id':'bass','enabled':False},'test',0,compact=True)
+        with self.assertRaises(RuntimeError):self.reviews.validated_command(self.p,review['id'],{'project_id':self.p.state['id'],'revision':1})
+
     def test_prepare_uses_current_mix_without_editing_project(self):
         self.p.apply({'type':'track_enabled','track_id':'drums','enabled':False},'test',0,compact=True)
         self.p.apply({'type':'segment_gain','track_id':'bass','start_seconds':1,'end_seconds':5,'mode':'gain','gain_db':-6},'test',1,compact=True)

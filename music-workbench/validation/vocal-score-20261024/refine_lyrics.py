@@ -7,8 +7,16 @@ sys.path.insert(0,str(ROOT.parent/'track-edit-e2e-20261024'))
 from scores import source_context
 from vocal_sources import lead_vocal_source
 from build_review_score import align_lyrics
+from phrase_review import checked_splice_grid
 
 def digest(path):return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+def checked_refinement_grid(grid,local,offset,lo,hi,lyrics):
+    """Reject a bad local refit without treating corrupt source data as a candidate."""
+    amended,rejection=checked_splice_grid(grid,local,offset,lo,hi,lyrics)
+    if rejection and rejection.get('reason')=='original_grid_does_not_match_full_lyrics':
+        raise ValueError('原始歌词时间轴与歌词不一致，停止出谱')
+    return amended,rejection
 
 def refine(data,analysis):
     context,lyrics=source_context(data);source=data/lead_vocal_source(data)['file']
@@ -61,20 +69,10 @@ def refine(data,analysis):
         if any(value>50 for value in checks):continue
         lo,hi=owner['start'],char['end'];local_lo=a+intervals[ordinal-1].minTime;local_hi=a+intervals[ordinal].maxTime
         if abs(local_lo-lo)>.04 or abs(local_hi-hi)>.04:continue
-        amended=copy.deepcopy(grid)
-        for tier in amended:
-            localtier=next((t for t in localgrid if t.name==tier.name),None)
-            if localtier is None:continue
-            values=[]
-            for interval in tier:
-                if interval.maxTime<=lo or interval.minTime>=hi:values.append(copy.deepcopy(interval))
-                else:
-                    if interval.minTime<lo:values.append(textgrid.Interval(interval.minTime,lo,interval.mark))
-                    if interval.maxTime>hi:values.append(textgrid.Interval(hi,interval.maxTime,interval.mark))
-            for interval in localtier:
-                start=max(lo,a+interval.minTime);end=min(hi,a+interval.maxTime)
-                if end>start:values.append(textgrid.Interval(start,end,interval.mark))
-            tier.intervals=sorted(values,key=lambda v:v.minTime)
+        amended,rejection=checked_refinement_grid(grid,localgrid,a,lo,hi,lyrics)
+        if rejection:
+            report.setdefault('rejected_refinements',[]).append({'line_index':char['line_index'],**rejection})
+            continue
         updated=copy.deepcopy(raw);position=next(i for i,n in enumerate(updated['notes']) if n==span)
         replacements=[{**n,'local_refinement':True} for n in candidates]
         updated['notes'][position:position+1]=replacements

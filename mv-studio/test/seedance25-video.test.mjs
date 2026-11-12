@@ -1,0 +1,28 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {createSeedance25Video} from '../seedance25-video.mjs';
+import {createMaterialStore} from '../materials.mjs';
+
+const uid=()=>crypto.randomUUID(), hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+const reply=(v,status=200)=>new Response(JSON.stringify(v),{status,headers:{'content-type':'application/json'}});
+const probe=async()=>({streams:[{codec_type:'video',width:1280,height:720}],format:{format_name:'mov,mp4,m4a,3gp,3g2,mj2',duration:'5.0'}});
+function setup(t,overrides={}){const data=fs.mkdtempSync(path.join(os.tmpdir(),'seedance-test-'));t.after(()=>fs.rmSync(data,{recursive:true,force:true}));const image=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),Buffer.alloc(64)]), imagePath=path.join(data,'frame.png'),imageId=uid();fs.writeFileSync(imagePath,image);let posts=0,gets=0,downloads=0;const materialStore={asset:id=>id===imageId?{file:imagePath,mime:'image/png',material:{id:imageId,kind:'image',width:1280,height:720,bytes:image.length,sha256:hash(image)}}:null};
+ const mock=async(url,opt)=>{if(opt.method==='POST'){posts++;return reply({id:'cgt-example'});}if(url.includes('/tasks/')){gets++;return reply({id:'cgt-example',status:'succeeded',content:{video_url:'https://output.volces.com/signed.mp4?secret=1'}});}downloads++;return new Response(Buffer.alloc(100,7),{status:200});};
+ const config={data,key:'key',probe,fetchImpl:mock,materialStore,budgetCny:50,reserveCnyPerSecond:2,allowedOutputHosts:['output.volces.com'],...overrides};
+ return{data,config,video:createSeedance25Video(config),input:{request_id:uid(),prompt:'夜晚的街道',duration:5,ratio:'16:9',image:{material_id:imageId}},counts:()=>({posts,gets,downloads})};}
+
+test('persists a paid task once and downloads a verified result',async t=>{const f=setup(t);assert.equal(f.video.capabilities().available,true);const submitted=await f.video.submit(f.input);assert.equal(submitted.status,'queued');const replay=await f.video.submit(f.input);assert.equal(replay.status,'queued');assert.equal(f.counts().posts,1);assert.equal(f.video.capabilities().remainingCny,40);const ready=await f.video.refresh(f.input.request_id);assert.equal(ready.status,'ready');assert.equal(f.video.asset(f.input.request_id).bytes,100);assert.equal(f.video.get(f.input.request_id).url,`/files/seedance25-video/${f.input.request_id}/video.mp4`);assert.deepEqual(f.counts(),{posts:1,gets:1,downloads:1});assert(!JSON.stringify(ready).includes('secret='));});
+
+test('same request ID with changed content and over-budget requests do not submit',async t=>{const f=setup(t,{budgetCny:10});await f.video.submit(f.input);await assert.rejects(f.video.submit({...f.input,prompt:'changed'}),e=>e.code==='SEEDANCE_CONFLICT');await assert.rejects(f.video.submit({...f.input,request_id:uid(),prompt:'different'}),e=>e.code==='SEEDANCE_BUDGET_EXCEEDED');assert.equal(f.counts().posts,1);});
+
+test('unknown submit result stays reserved and blocks automatic retry across restart',async t=>{let posts=0;const f=setup(t,{fetchImpl:async()=>{posts++;throw Error('network');}});await assert.rejects(f.video.submit(f.input),e=>e.code==='SEEDANCE_SUBMISSION_UNCERTAIN'&&e.retryBlocked);const after=createSeedance25Video(f.config);assert.equal(after.get(f.input.request_id).status,'uncertain');assert.equal((await after.submit(f.input)).status,'uncertain');await assert.rejects(after.submit({...f.input,request_id:uid()}),e=>e.code==='SEEDANCE_DUPLICATE');assert.equal(posts,1);assert.equal(after.capabilities().remainingCny,40);});
+
+test('no key or verified output host means unavailable without network',async t=>{const f=setup(t,{key:''});assert.equal(f.video.capabilities().available,false);await assert.rejects(f.video.submit(f.input),e=>e.code==='SEEDANCE_NOT_CONFIGURED');assert.equal(f.counts().posts,0);const nohost=createSeedance25Video({...f.config,key:'key',allowedOutputHosts:[]});assert.equal(nohost.capabilities().available,false);});
+
+test('untrusted returned domain never gets fetched and task remains retryable by polling',async t=>{let downloads=0;const f=setup(t,{fetchImpl:async(url,opt)=>{if(opt.method==='POST')return reply({id:'cgt-example'});if(url.includes('/tasks/'))return reply({id:'cgt-example',status:'succeeded',content:{video_url:'https://attacker.example/data'}});downloads++;return new Response('unexpected');}});await f.video.submit(f.input);const state=await f.video.refresh(f.input.request_id);assert.equal(state.status,'download_failed');assert.equal(downloads,0);assert.equal(f.video.capabilities().remainingCny,40);});
+
+test('reads a real registered material-store image',async t=>{const data=fs.mkdtempSync(path.join(os.tmpdir(),'seedance-material-'));t.after(()=>fs.rmSync(data,{recursive:true,force:true}));const mediaProbe=async()=>({streams:[{codec_type:'video',codec_name:'png',width:1280,height:720}],format:{format_name:'png_pipe'}});const store=createMaterialStore({data,probe:mediaProbe,write:(file,value)=>fs.writeFileSync(file,JSON.stringify(value),{flag:'wx'})});const bytes=Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]),Buffer.alloc(64)]);const image=await store.upload('frame.png',bytes);let calls=0;const video=createSeedance25Video({data,key:'key',probe:mediaProbe,budgetCny:50,reserveCnyPerSecond:2,allowedOutputHosts:['output.volces.com'],fetchImpl:async()=>{calls++;return reply({id:'cgt-material'});}});assert.equal((await video.submit({request_id:uid(),prompt:'镜头',duration:5,ratio:'16:9',image:{material_id:image.id}})).status,'queued');assert.equal(calls,1);});
