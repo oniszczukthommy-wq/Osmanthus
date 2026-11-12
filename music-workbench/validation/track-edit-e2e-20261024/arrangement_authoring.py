@@ -22,6 +22,7 @@ import mido
 import numpy as np
 import soundfile as sf
 from music21 import harmony
+from runtime_support import media_tool
 
 CODE_ROOT = Path(__file__).resolve().parent
 TUNING = (40, 45, 50, 55, 59, 64)
@@ -48,6 +49,11 @@ class AuthoringResources:
         for name in ("root", "soundfont", "chords_db", "synth"):
             object.__setattr__(self, name, Path(getattr(self, name)).resolve())
         object.__setattr__(self, "protected_roots", tuple(Path(p).resolve() for p in self.protected_roots))
+        # Windows ships the synth as fluidsynth.exe; the Unix-style default must
+        # still resolve so the asset check in render_part() sees a real file.
+        synth = media_tool(self.synth)
+        if synth != self.synth:
+            object.__setattr__(self, "synth", synth.resolve())
 
 
 def _resources(value):

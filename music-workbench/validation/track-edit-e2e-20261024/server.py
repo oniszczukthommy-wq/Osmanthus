@@ -9,7 +9,7 @@ from media_paths import media_file
 from preview_cache import open_media
 from local_access import local_request_allowed
 from paid_usage import paid_call, PaidUsageError
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 import numpy as np
 import soundfile as sf
 from runtime_support import load_env
@@ -21,8 +21,9 @@ from workflow import Workflow, STREAM, PROJECTS, valid_id
 from generation_pairs import GenerationPairs
 from generation_drafts import GenerationDrafts
 from create_flow import CreationFlow, fields as creation_fields
-from mv_bridge import MVHandoffs, proxy_mv
+from mv_bridge import MVHandoffs, proxy_mv, attach_metadata_fingerprint
 from speech import SpeechInput,MAX_BYTES as MAX_SPEECH_BYTES
+from stem_split import StemSplit, MAX_BYTES as MAX_STEM_BYTES
 from artwork import Artwork
 from share import ShareManager
 from instruments import Instruments
@@ -32,6 +33,8 @@ from vocals import Vocals,PRESETS
 from voice_library import VoiceLibrary
 from lyrics import Lyrics
 from inspiration import generate as generate_inspiration
+from style_optimizer import optimize as optimize_style
+from style_previews import STYLE_PREVIEW_IDS, available_style_previews, style_preview_file
 from svc import Conversions
 from sections import Sections, resolve_reference
 from score_review import ScoreReviews
@@ -67,6 +70,7 @@ GENERATION_PAIRS=GenerationPairs(WORKFLOW)
 GENERATION_DRAFTS=GenerationDrafts(GENERATION_PAIRS)
 CREATE_FLOW=CreationFlow(GENERATION_PAIRS,GENERATION_DRAFTS)
 SPEECH=SpeechInput()
+STEM_SPLIT=StemSplit()
 INSTRUMENTS=Instruments()
 ARRANGEMENTS=Arrangements()
 SCORES=Scores()
@@ -204,7 +208,7 @@ def mv_source(identifier,expected=None,freeze=False):
                         start=line.get('start_seconds',line.get('start'));end=line.get('end_seconds',line.get('end'))
                         if isinstance(start,(int,float)) and isinstance(end,(int,float)) and 0<=start<end<=info['duration']+.15:info['timed_lyrics'].append({'start':start,'end':end,'text':line.get('text','')})
             except (ValueError,RuntimeError,OSError):pass
-        return info
+        return attach_metadata_fingerprint(info,expected)
 
 def assistant(body):
     global PROJECT
@@ -409,7 +413,8 @@ class Handler(BaseHTTPRequestHandler):
                 if start>end or start>=size:return self.json(416,{'error':'Range超出文件'})
                 status=206
             self.send_response(status)
-            self.send_header('Content-Type',mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
+            # Windows' MIME registry may not include WebP even when browsers support it.
+            self.send_header('Content-Type','image/webp' if path.suffix.lower()=='.webp' else (mimetypes.guess_type(path.name)[0] or 'application/octet-stream'))
             self.send_header('Content-Length',str(end-start+1));self.send_header('Accept-Ranges','bytes')
             self.send_header('Cache-Control','no-cache')
             if status==206:self.send_header('Content-Range',f'bytes {start}-{end}/{size}')
@@ -436,6 +441,11 @@ class Handler(BaseHTTPRequestHandler):
             try:return self.serve(MV_HANDOFFS.audio(match[1])) if match[2] else self.json(200,MV_HANDOFFS.public(MV_HANDOFFS.read(match[1])))
             except ValueError as exc:return self.json(404,{'error':str(exc)})
             except RuntimeError as exc:return self.json(409,{'error':str(exc)})
+        if path=='/api/stem-split/capabilities':return self.json(200,STEM_SPLIT.capabilities())
+        match=re.fullmatch(r'/api/stem-split/jobs/([a-f0-9-]+)(?:/stems/([a-z]+\.wav))?',path)
+        if match:
+            try:return self.serve(STEM_SPLIT.asset(match[1],match[2])) if match[2] else self.json(200,STEM_SPLIT.public(STEM_SPLIT.read(match[1])))
+            except (ValueError,RuntimeError) as exc:return self.json(404,{'error':str(exc)})
         if path=='/api/creation/jobs':return self.json(200,{'requests':CREATE_FLOW.list()})
         match=re.fullmatch(r'/api/creation/jobs/([a-f0-9-]+)',path)
         if match:
@@ -560,7 +570,17 @@ class Handler(BaseHTTPRequestHandler):
             return self.serve(ROOT/'index.html')
         if path=='/assets/brand/osmanthus-logo.png':
             return self.serve(ROOT/'assets/brand/osmanthus-logo.png')
-        if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-inspiration.js','/studio-generation-autoplay.js','/studio-create.js','/studio-creation-request.js'):
+        match=re.fullmatch(r'/assets/style-covers/([a-z0-9-]+)\.webp',path)
+        if match:
+            if match[1] not in STYLE_PREVIEW_IDS:return self.json(404,{'error':'文件不存在'})
+            try:return self.serve(media_file(ROOT/'assets'/'style-covers',match[1]+'.webp',('.webp',)))
+            except ValueError:return self.json(404,{'error':'文件不存在'})
+        if path=='/api/style-previews':return self.json(200,{'ids':available_style_previews(ROOT)})
+        match=re.fullmatch(r'/style-previews/([a-z0-9-]+)\.mp3',path)
+        if match:
+            try:return self.serve(style_preview_file(ROOT,match[1]))
+            except ValueError:return self.json(404,{'error':'文件不存在'})
+        if path in ('/studio.js','/studio.css','/studio-design.css','/studio-icons.js','/studio-speech.js','/studio-player.js','/studio-idea.js','/studio-inspiration.js','/studio-generation-autoplay.js','/studio-create.js','/studio-creation-request.js','/prompt-suggestions.js','/stem-split.js','/stem-split.css','/style-library.js','/style-library.css'):
             return self.serve(ROOT/path[1:])
         if path in ('/','/app.js','/seek-control.js','/score.js','/vocals.js','/svc.js','/voice-library.js','/lyrics.js','/generation.js','/generation.css','/style.css','/interactions.css','/sections.js','/candidate_review.js'):
             return self.serve(ROOT/('index.html' if path=='/' else path[1:]))
@@ -595,6 +615,16 @@ class Handler(BaseHTTPRequestHandler):
         if urlparse(self.path).path.startswith('/mv/'):return proxy_mv(self,MV_PORT)
         try:
             length=int(self.headers.get('Content-Length',0))
+            if urlparse(self.path).path=='/api/stem-split/jobs':
+                if not 0<length<=MAX_STEM_BYTES:
+                    self.close_connection=True
+                    raise ValueError('音频文件需大于 0 且不超过 150 MB')
+                filename=parse_qs(urlparse(self.path).query).get('filename',[''])[0]
+                quality=parse_qs(urlparse(self.path).query).get('quality',['standard'])[0]
+                try:return self.json(202,STEM_SPLIT.start(self.rfile,length,filename,quality=quality))
+                except Exception:
+                    self.close_connection=True
+                    raise
             if urlparse(self.path).path=='/api/speech/jobs':
                 if not 0<length<=MAX_SPEECH_BYTES:raise ValueError('录音需大于0且不超过8MB')
                 payload=self.rfile.read(length)
@@ -656,6 +686,7 @@ class Handler(BaseHTTPRequestHandler):
                 if body.get('instrumental') is not True and body.get('request_id') not in CREATE_FLOW.requests:raise ValueError('请先展示并确认歌词，再生成歌曲；请刷新页面使用新的创作流程')
                 return self.json(202,CREATE_FLOW.start(body))
             if path=='/api/creation/inspiration':return self.json(200,generate_inspiration(body))
+            if path=='/api/creation/optimize-style':return self.json(200,optimize_style(body))
             if path=='/api/creation/lyrics':return self.json(202,CREATE_FLOW.write_lyrics(body))
             match=re.fullmatch(r'/api/creation/jobs/([a-f0-9-]+)/resume',path)
             if match:return self.json(202,CREATE_FLOW.resume(match[1]))

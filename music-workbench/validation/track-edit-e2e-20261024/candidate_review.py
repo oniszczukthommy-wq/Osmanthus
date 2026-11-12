@@ -129,6 +129,20 @@ class CandidateReviews:
             command={'type':'vocal_variant','track_id':'vocals','variant_id':identifier}
         return asset,audio,command,targets,[a,b],scope
 
+    def _segment(self,project,spec):
+        if not isinstance(spec,dict):raise ValueError('请重新选择要调整的轨道和片段')
+        identifier=spec.get('track_id')
+        track=project.state['tracks'].get(identifier)
+        if not track or track.get('removed'):raise ValueError('所选轨道不存在，请重新选择')
+        a,b=number(spec.get('start_seconds')),number(spec.get('end_seconds'))
+        if not 0<=a<b<=project.meta['duration_seconds'] or b-a<.01:raise ValueError('请选择歌曲内有效的片段，至少 0.01 秒')
+        mode=spec.get('mode');db=number(spec.get('gain_db',0))
+        if mode not in ('mute','gain') or not -60<=db<=0:raise ValueError('音量调整无效，请重新选择')
+        command={'type':'segment_gain','track_id':identifier,'start_seconds':a,'end_seconds':b,'mode':mode,'gain_db':db}
+        label=next((t.get('label',identifier) for t in project.meta['tracks'] if t['id']==identifier),identifier)
+        asset={'id':identifier,'label':label,'sha256':project.track_digest(identifier),'command':command}
+        return asset,None,command,[identifier],[a,b],'片段音量调整'
+
     @staticmethod
     def _install(project,kind,asset,audio):
         """Refresh immutable in-memory catalog only; never persist mix settings."""
@@ -148,7 +162,8 @@ class CandidateReviews:
         # Clone again so even a caller passing the live Project cannot mutate it.
         before=project.audio_snapshot();after=project.audio_snapshot()
         kind=body.get('kind');identifier=body.get('candidate_id')
-        asset,audio,command,targets,bounds,scope=self._candidate(before,kind,identifier)
+        asset,audio,command,targets,bounds,scope=(self._segment(before,body.get('segment')) if kind=='segment' else self._candidate(before,kind,identifier))
+        if kind=='segment':identifier=asset['id']
         start=number(body.get('preview_start_seconds'));end=number(body.get('preview_end_seconds'))
         duration=before.meta['duration_seconds']
         if not 0<=start<end<=duration:raise ValueError('请选择歌曲内有效的试听区间')
@@ -168,7 +183,7 @@ class CandidateReviews:
                     for name in previous['files']:self.asset(previous['id'],name)
                     return self.public(previous)
             except (OSError,ValueError,TypeError,KeyError):continue
-        self._install(after,kind,asset,audio)
+        if kind!='segment':self._install(after,kind,asset,audio)
         with tempfile.TemporaryDirectory(prefix='candidate-reducer-',dir=self.directory) as temp:
             after.file=Path(temp)/'state.json'
             after.apply(command,'candidate-preview',before.state['revision'],compact=True)
@@ -187,9 +202,15 @@ class CandidateReviews:
         start_frame,end_frame=[round(v*before.sr) for v in preview]
         a=a[start_frame:end_frame];b=b[start_frame:end_frame]
         matching=comparison_gain(a,b)
+        if kind=='segment':
+            # Keep the selected volume difference audible: apply only one common
+            # safety attenuation to both sides, never RMS-match the candidate.
+            peak_pair=max(float(np.max(np.abs(a))),float(np.max(np.abs(b))),1e-9)
+            matching.update(method='common-peak-only',candidate_gain=1.,candidate_gain_db=0.,common_peak_gain=min(1.,.95/peak_pair),matching_limited=False,
+                            note='前后使用相同的安全衰减，不改变相对音量差。')
         warnings=[]
-        if not changed:warnings.append('候选未改变可听混音；目标轨可能已关闭或此段无声，请检查再试听。')
-        if peak>1:warnings.append('应用后的混音会超过 0 dBFS；请先调整混音，再重新准备对照。')
+        if not changed:warnings.append('当前混音听起来没有变化；目标轨可能已关闭或此段无声，应用后调整仍会保留。' if kind=='segment' else '候选未改变可听混音；目标轨可能已关闭或此段无声，请检查再试听。')
+        if peak>1:warnings.append('调整后的混音可能失真，请试听确认。' if kind=='segment' else '应用后的混音会超过 0 dBFS；请先调整混音，再重新准备对照。')
         if any(s['needs_listening'] for s in seams):warnings.append('接缝检测发现突变风险，请重点试听前后过渡；本检测不代表听感验收。')
         if matching['matching_limited']:warnings.append('原版或候选过静／响度差较大，RMS 补偿已限制在 ±6 dB。')
         review_id=str(uuid.uuid4());folder=self.directory/review_id;folder.mkdir()
@@ -209,7 +230,7 @@ class CandidateReviews:
                'preserved_tracks':[{'id':k,'label':labels.get(k,k)} for k in preserved],
                'checks':{'same_timeline':True,'non_target_tracks_unchanged':non_target,'outside_range_sample_identical':outside,
                          'audible_mix_changed':changed,'candidate_mix_peak':peak,'seams':seams,'musical_quality_accepted':False},
-               'matching':matching,'warnings':warnings,'can_apply':bool(peak<=1 and changed),'files':files}
+               'matching':matching,'warnings':warnings,'can_apply':bool(kind=='segment' or (peak<=1 and changed)),'files':files}
         save_json(folder/'state.json',state)
         return self.public(state)
 
@@ -239,9 +260,9 @@ class CandidateReviews:
             state['data_dir']!=str(project.directory.resolve())):
             raise RuntimeError('工程在试听后已变化，请重新准备候选对照；没有覆盖你的修改')
         if not state['can_apply']:raise ValueError('此对照尚不能应用，请先处理提示并重新试听')
-        asset,audio,command,_,_,_=self._candidate(project,state['kind'],state['candidate_id'])
+        asset,audio,command,_,_,_=(self._segment(project,state['command']) if state['kind']=='segment' else self._candidate(project,state['kind'],state['candidate_id']))
         if (asset['sha256']!=state['candidate_sha256'] or command!=state['command'] or
             hashlib.sha256(json.dumps(asset,sort_keys=True).encode()).hexdigest()!=state['candidate_metadata_sha256']):
             raise RuntimeError('候选在试听后已变化，请重新准备对照')
-        self._install(project,state['kind'],asset,audio)
+        if state['kind']!='segment':self._install(project,state['kind'],asset,audio)
         return command

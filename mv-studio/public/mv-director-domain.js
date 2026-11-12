@@ -72,11 +72,29 @@ export function applyCreativeEdit(plan, target, response) {
   item.name = text(response.name, 60, '名称'); item.description = text(response.description, 650, '修改描述');
   return result;
 }
+const TEMPORAL_MARK = /(然后|接着|随后|之后|紧接着|再|最后)/;
+
+// A shot description often narrates two beats ("画笑脸，然后转身走远").
+// The still generator renders that as a split panel, so keep the first beat only.
+function firstMoment(description) {
+  const match = TEMPORAL_MARK.exec(description);
+  if (!match) return description;
+  const head = description.slice(0, match.index).replace(/[，,。；;、\s]+$/, '');
+  return head.length >= 6 ? head : description;
+}
+
 export function previewRecipe(plan, item, ratio, references = []) {
   const isShot = item.id.startsWith('shot-');
   const dependencies = isShot ? [...item.characterIds, item.sceneId] : [];
   const details = dependencies.map(id => [...plan.characters, ...plan.scenes].find(x => x.id === id));
-  const prompt = `${plan.style}。${isShot ? 'MV单个镜头关键画面，参考图中的角色和场景保持一致。' : item.id.startsWith('character-') ? 'MV角色形象设定，单人清晰全身形象，保持外貌和服装。' : 'MV场景设定，展示空间、光线和环境。'}${item.description}。${details.map(x => x.description).join('。')}。无文字、无拼贴、无字幕。`.slice(0, 1200);
+  const body = isShot ? firstMoment(item.description) : item.description;
+  const framing = isShot
+    ? 'MV单个镜头关键画面，参考图中的角色和场景保持一致。'
+    : item.id.startsWith('character-')
+      ? 'MV角色形象设定，单人清晰全身形象，保持外貌和服装。'
+      : 'MV场景设定，展示空间、光线和环境。';
+  const single = isShot ? '单幅画面，只表现上述一个瞬间，不要左右分屏、双联、多格或拼贴。' : '';
+  const prompt = `${plan.style}。${framing}${body}。${details.map(x => x.description).join('。')}。${single}无文字、无字幕。`.slice(0, 1200);
   return {prompt, ratio, dependencies, references: isShot ? [] : references};
 }
 export function videoRecipe(shot, image, ratio) {

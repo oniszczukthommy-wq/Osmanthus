@@ -46,30 +46,31 @@ export function initializeCandidateReview({getProject,getSelection,transport,set
     el('refresh').disabled=loading||applying||!spec||applied;
     el('cancel').disabled=applying;
     if(!review){for(const name of ['scope','keep','range','matching','checks','warning'])el(name).textContent='';return;}
+    const segment=review.kind==='segment';el('a').textContent=segment?'修改前':'A · 当前工程';el('b').textContent=segment?'调整后':'B · 候选（匹配响度）';el('actual').hidden=segment;
     el('scope').textContent=`${review.scope}：${review.label} · 应用范围 ${review.range_seconds.map(clock).join('—')}`;
     el('keep').textContent=`保持：${review.preserved_tracks.map(t=>t.label).join('、')||'其他已有轨道'}；修改范围之外的声音保持原样。`;
     el('range').textContent=`本次试听 ${review.preview_range_seconds.map(clock).join('—')}（包含前后最多各 2 秒过渡）；试听区间不改变上面的应用范围。`;
-    el('matching').textContent=`B 版采用 RMS 近似响度匹配，试听补偿 ${review.matching.candidate_gain_db.toFixed(2)} dB；此补偿不写入工程。“候选实际音量”用于检查应用后的真实平衡。`;
+    el('matching').textContent=segment?'两版使用相同的试听音量基准，保留实际音量差。':`B 版采用 RMS 近似响度匹配，试听补偿 ${review.matching.candidate_gain_db.toFixed(2)} dB；此补偿不写入工程。“候选实际音量”用于检查应用后的真实平衡。`;
     const seam=review.checks.seams.filter(s=>s.needs_listening).map(s=>clock(s.at_seconds));
-    el('checks').textContent=`时间线、非目标轨道和区间外采样检查通过。${seam.length?'重点核听接缝：'+seam.join('、')+'。':'未触发接缝突变阈值。'}这些检查不能替代音乐听感确认。`;
+    el('checks').textContent=segment?'其他音轨和选区之外保持不变；请试听前后过渡。':`时间线、非目标轨道和区间外采样检查通过。${seam.length?'重点核听接缝：'+seam.join('、')+'。':'未触发接缝突变阈值。'}这些检查不能替代音乐听感确认。`;
     el('warning').textContent=review.warnings.join(' ');
     for(const [id,key] of [['a','reference.wav'],['b','candidate.wav'],['actual','candidate-actual.wav']])el(id).setAttribute('aria-pressed',String(mode===key));
   }
   async function open(value){
     if(applying)return;
-    const token=++serial;pause();audio.removeAttribute('src');audio.load();review=null;spec={...value};applied=false;stale=false;loading=true;error='';panel.hidden=false;paint();panel.scrollIntoView({block:'nearest',behavior:'smooth'});
+    const token=++serial;pause();audio.removeAttribute('src');audio.load();review=null;spec={...value};applied=false;stale=false;loading=true;error='';panel.hidden=false;paint();panel.scrollIntoView({block:'center',behavior:'smooth'});
     try{
       if(!await settle())throw Error('轨道修改尚未保存，请先处理工程提示');
       if(token!==serial)return;
       const p=getProject();if(!p)throw Error('请先打开歌曲工程');const expected=signature(p);
       const asset=value.kind==='arrangement'?(p.available_parts||[]).find(c=>c.id===value.candidate_id):null;
       const range=previewSelection(p,getSelection?.(),asset||value);
-      const result=await request('/api/candidate-reviews',{project_id:p.id,revision:p.revision,kind:value.kind,candidate_id:value.candidate_id,...range});
+      const result=await request('/api/candidate-reviews',{project_id:p.id,revision:p.revision,kind:value.kind,candidate_id:value.candidate_id,...(value.kind==='segment'?{segment:value.segment}:{}),...range});
       if(token!==serial)return;
       if(signature(getProject())!==expected)throw Error('准备期间工程已变化，请按当前工程重新准备对照');
       review=result;mode='reference.wav';error='';
     }catch(e){if(token===serial)error=e.message;}
-    finally{if(token===serial){loading=false;paint();}}
+    finally{if(token===serial){loading=false;paint();if(review&&!panel.hidden)panel.scrollIntoView({block:'center',behavior:'smooth'});}}
     return review;
   }
   function audition(key){
@@ -87,6 +88,15 @@ export function initializeCandidateReview({getProject,getSelection,transport,set
   el('refresh').onclick=()=>{if(spec)void open(spec);};
   function cancel(){if(applying)return;serial++;pause();audio.removeAttribute('src');audio.load();panel.hidden=true;review=null;spec=null;loading=false;error='';stale=false;paint();}
   el('cancel').onclick=cancel;
+  function invalidateSegment(){
+    if(panel.hidden||spec?.kind!=='segment'||applying||applied)return;
+    const now=window.trackEditorState?.selection,s=spec.segment,volume=document.getElementById('segment-volume');
+    if(!now||!s||now.track_id!==s.track_id||Number(now.start_seconds)!==s.start_seconds||Number(now.end_seconds)!==s.end_seconds||Number(volume?.value)!==spec.volume){
+      cancel();const status=document.getElementById('segment-preview-status');if(status)status.textContent='轨道、片段或音量已改变，请重新准备试听。';
+    }
+  }
+  window.addEventListener('track-editor-selection-change',invalidateSegment);
+  document.getElementById('segment-volume')?.addEventListener('input',invalidateSegment);
   el('apply').onclick=async()=>{
     if(applying||!review||!review.can_apply)return;
     applying=true;error='';pause();paint();
@@ -106,5 +116,5 @@ export function initializeCandidateReview({getProject,getSelection,transport,set
   },300);
   Object.defineProperty(window,'candidateReviewState',{configurable:true,get:()=>({review,loading,applying,applied,stale,error,mode,paused:audio.paused,currentTime:audio.currentTime,hidden:panel.hidden})});
   paint();
-  return {open,pause,cancel,destroy:()=>{clearInterval(timer);cancel();panel.remove();}};
+  return {open,pause,cancel,destroy:()=>{clearInterval(timer);window.removeEventListener('track-editor-selection-change',invalidateSegment);document.getElementById('segment-volume')?.removeEventListener('input',invalidateSegment);cancel();panel.remove();}};
 }

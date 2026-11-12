@@ -61,6 +61,17 @@ test('reference image picker filters incompatible media even when loader ignores
  await panel.dialog.emit('click',button({rpToggleAsset:'img'}));await panel.dialog.emit('click',button({rpAction:'confirm-assets'}));assert.equal(selected.length,1);assert.equal(selected[0][0].type,'image');panel.destroy();
 });
 
+test('canvas assistant picker hides model choices while preserving an old project setting',async t=>{
+ env(t);
+ const project={id:'existing',studio:{selectedModel:{id:'old-model'}}},selected=[];
+ const panel=mountReferencePanels({read:()=>project,onAgent:item=>selected.push(item),onModel:()=>{throw Error('model selection must not be reachable');}},
+  {models:[{id:'new-model',name:'Visible model',category:'image',available:true}],agents:[{id:'director',name:'Creative assistant',category:'image',available:true}]},
+  {allowModelSelection:false});
+ panel.openModels();assert.match(panel.dialog.innerHTML,/Creative assistant/);assert.doesNotMatch(panel.dialog.innerHTML,/Visible model|data-rp-tab="models"/);
+ await panel.dialog.emit('click',button({rpTab:'models'}));assert.doesNotMatch(panel.dialog.innerHTML,/Visible model/);
+ await panel.dialog.emit('click',button({rpSelectModel:'director'}));assert.equal(selected[0].id,'director');assert.equal(project.studio.selectedModel.id,'old-model');panel.destroy();
+});
+
 test('failed reference selection preserves target for correction instead of losing its connection',async()=>{
  const fn=canvas.slice(canvas.indexOf('onSelectAssets:')+'onSelectAssets:'.length,canvas.indexOf(',onStyle:',canvas.indexOf('onSelectAssets:')));
  const context={referenceTarget:'target',doc:{nodes:[{id:'target'}]},selection:null,renderSelection(){},addMaterials:async()=>['image'],connectNodes:(doc,source,target)=>({...doc,edge:{source,target}}),commit:next=>context.doc=next};
@@ -128,6 +139,20 @@ test('enter reuses an existing music-free canvas and creates blank only for a fr
  await saved.run("action('empty-canvas')");assert.equal(saved.state.project.id,'music-project');assert.equal(saved.state.activations[0].blank,false);assert.equal(saved.state.project.studio.ratio,'9:16');
  const fresh=canvasEntryFixture({source:{id:'sample'},musicHandoff:null,studio:{ratio:'16:9'}});
  await fresh.run("action('empty-canvas')");assert.equal(fresh.state.activations[0].blank,true);assert.equal(fresh.state.project.id,'new-canvas');
+});
+
+test('direct canvas entry creates a real empty project for the initial sample draft',async()=>{
+ const fresh=canvasEntryFixture({id:'draft',source:{id:'sample'},musicHandoff:null,studio:{ratio:'16:9'}});
+ await fresh.run('openCanvas(false)');
+ assert.equal(fresh.state.activations[0].blank,true);
+ assert.equal(fresh.state.project.id,'new-canvas');
+ assert.equal(fresh.state.project.studio.freeCanvas,true);
+
+ // A previously saved project must not be silently replaced on direct entry.
+ const saved=canvasEntryFixture({id:'saved-legacy',source:{id:'sample'},musicHandoff:null,studio:{ratio:'9:16'}});
+ await saved.run('openCanvas(false)');
+ assert.equal(saved.state.activations[0].blank,false);
+ assert.equal(saved.state.project.id,'saved-legacy');
 });
 
 test('canvas activation keeps old controls inert and starts storyboard only after the new origin is ready',async()=>{

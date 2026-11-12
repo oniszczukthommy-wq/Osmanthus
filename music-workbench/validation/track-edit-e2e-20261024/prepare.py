@@ -1,5 +1,5 @@
 """Prepare a real YinChao song for the shared-project audio edit acceptance."""
-from runtime_support import file_lock as fcntl, media_binary
+from runtime_support import file_lock as fcntl, media_binary, acquire_demucs_lock
 from pathlib import Path
 import argparse, subprocess, os
 import hashlib, json, time
@@ -16,7 +16,11 @@ def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--source',type=Path,default=SOURCE);parser.add_argument('--output',type=Path,default=DATA)
     parser.add_argument('--title',default='末班车的窗');parser.add_argument('--project-id')
+    parser.add_argument('--model',choices=('htdemucs','htdemucs_ft'),default='htdemucs')
+    parser.add_argument('--repo',type=Path,help='Local Demucs model repository; required for htdemucs_ft')
     args=parser.parse_args();SOURCE=args.source.resolve();DATA=args.output.resolve()
+    if args.model=='htdemucs_ft' and (not args.repo or not args.repo.is_dir()):
+        parser.error('htdemucs_ft requires an existing local --repo')
     DATA.mkdir(parents=True,exist_ok=True)
     # Survives a web-server restart: an orphaned preparation process keeps the
     # lock, while the resumed worker waits and then reuses its completed files.
@@ -26,9 +30,15 @@ def main():
     existing = DATA / 'preparation.json'
     try:prepared=json.loads(existing.read_text()) if existing.exists() else {}
     except ValueError:prepared={}
-    if prepared_assets_valid(DATA,prepared,digest):
+    if prepared_assets_valid(DATA,prepared,digest,model=args.model):
         print('Prepared song already exists; no repeated separation.', flush=True)
         return
+    if prepared_assets_valid(DATA,prepared,digest):
+        raise ValueError('Output already contains another model; use a new output directory')
+    # The web upload and song-project workflows can start separate Python
+    # processes. Serialize their expensive inference without changing either
+    # project's files. OS file locks are released even if a worker exits.
+    compute_guard=acquire_demucs_lock(os.environ.get('MUSIC_WORKBENCH_ROOT',str(ROOT)))
     import torch
     from demucs.pretrained import get_model
     from demucs.apply import apply_model
@@ -39,7 +49,7 @@ def main():
         ffmpeg=media_binary('ffmpeg')
         subprocess.run([str(ffmpeg),'-nostdin','-y','-v','error','-i',str(SOURCE),'-ar','44100','-ac','2',str(working)],check=True,capture_output=True)
         audio,sr=sf.read(working,dtype='float32',always_2d=True)
-    model = get_model('htdemucs').eval()
+    model = get_model(args.model,repo=args.repo).eval()
     if sr != model.samplerate: raise ValueError('Unexpected source sample rate')
     device = os.environ.get('MUSIC_SEPARATION_DEVICE','mps' if torch.backends.mps.is_available() else 'cpu')
     if device=='mps':torch.mps.set_per_process_memory_fraction(.8)
@@ -74,7 +84,7 @@ def main():
     sf.write(DATA/'baseline.wav',baseline*headroom,sr,subtype='FLOAT')
     sf.write(DATA/'original.wav',audio,sr,subtype='FLOAT')
     report = {'song_title':args.title,'source':str(SOURCE),'source_sha256':digest,
-              'provider':'yinchao','model':'htdemucs','device':device,'sample_rate':sr,
+              'provider':'yinchao','model':args.model,'device':device,'sample_rate':sr,
               'frames':len(audio),'duration_seconds':len(audio)/sr,'tracks':tracks,
               'separation_seconds':round(time.perf_counter()-started,3),
               'master_gain':headroom,'baseline_peak_before_master':peak,

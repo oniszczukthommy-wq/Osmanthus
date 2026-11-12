@@ -32,8 +32,11 @@ def handler_class(root, *, windows=False):
         send_file_chunk=lambda conn,data:(conn.sendall(data) is None))
     from media_paths import media_file
     from preview_cache import open_media
+    from style_previews import available_style_previews, style_preview_file
     scope['media_file']=media_file
     scope['open_media']=open_media
+    scope['available_style_previews']=available_style_previews
+    scope['style_preview_file']=style_preview_file
     exec(compile(ast.fix_missing_locations(ast.Module(body=[cls],type_ignores=[])),str(CODE/'server.py'),'exec'),scope)
     scope['DownloadHandler'].log_message=lambda *args:None
     return scope['DownloadHandler']

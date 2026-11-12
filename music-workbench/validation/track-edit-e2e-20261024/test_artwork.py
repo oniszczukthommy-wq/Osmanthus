@@ -62,6 +62,20 @@ class ArtworkTests(unittest.TestCase):
         self.assertEqual(self.state(job)['stage'],'interrupted');self.assertEqual(len(self.calls),0)
         with self.assertRaises(RuntimeError):self.manager.resume(job['id'])
 
+    def test_restart_pauses_unsent_queue_until_explicit_retry(self):
+        with patch.object(self.manager,'launch_next'):
+            job=self.manager.ensure(self.reference)
+        saved=(self.root/'artwork'/job['id']/'state.json').read_bytes()
+        self.manager=artwork.Artwork(self.root)
+        with patch.object(self.manager,'launch_next') as launch:
+            self.manager.recover();self.manager.recover()
+            launch.assert_not_called()
+        self.assertEqual(self.state(job)['stage'],'interrupted')
+        self.assertEqual((self.root/'artwork'/job['id']/'state.json').read_bytes(),saved)
+        self.assertEqual(len(self.calls),0)
+        self.manager.retry(job['id'],str(uuid.uuid4()));self.wait()
+        self.assertEqual(len(self.calls),1)
+
     def test_recover_does_not_interrupt_live_worker_and_queue_finishes(self):
         entered=threading.Event();release=threading.Event();original=self.call.side_effect
         def slow(*args):entered.set();release.wait(2);return original(*args)

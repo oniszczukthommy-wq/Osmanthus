@@ -70,15 +70,37 @@ class PairTests(unittest.TestCase):
         self.assertTrue(self.service.release_second(b));self.launch.assert_called_once_with(c)
         self.assertFalse(a['download_ready']);self.assertIsNotNone(b['second_released_at'])
 
-    def test_queued_restart_waits_but_existing_submitted_second_is_resumed(self):
+    def test_restart_pauses_until_explicit_resume_including_submitted_candidates(self):
         b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
         a.update(submission_started=True,task_id='running-first');w.STREAM.persist(a)
         work=w.Workflow();service=gp.GenerationPairs(work,self.root/'batches')
         with patch.object(work,'launch') as launch,patch.object(service,'launch_sequence') as queue:
-            service.recover();self.assertEqual([x.args[0]['id'] for x in launch.call_args_list],[a['id']]);queue.assert_called_once()
+            service.recover();launch.assert_not_called();queue.assert_not_called()
+            self.assertTrue(service.public(service.read(b['id']))['can_resume_batch'])
             second=work.jobs[c['id']];second.update(submission_started=True,task_id='already-running-second')
             launch.reset_mock();service.resume(b['id'])
             self.assertEqual([x.args[0]['id'] for x in launch.call_args_list],[a['id'],c['id']])
+
+    def test_restart_never_launches_unsent_lyric_or_song_requests(self):
+        with patch.object(self.service,'launch_draft'):
+            self.service.start(self.body)
+        waiting=self.service.read(self.body['request_id'])
+        self.body={**self.body,'request_id':str(uuid.uuid4())}
+        b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
+        # A has completed and B would previously have been submitted on startup.
+        a.update(stage='awaiting_selection',status='done',audio_url='https://example.test/a.mp3',download_ready=True)
+        w.STREAM.persist(a)
+        self.queue.reset_mock();self.launch.reset_mock()
+        with patch.object(self.service,'launch_draft') as draft:
+            self.service.recover();draft.assert_not_called()
+            self.launch.assert_not_called();self.queue.assert_not_called()
+            pending=self.service.public(waiting)
+            self.assertTrue(pending['can_resume_batch']);self.assertIn('暂停',pending['error'])
+            resumed=self.service.public(b)
+            self.assertTrue(resumed['can_resume_batch']);self.assertEqual(resumed['candidates'][1]['stage'],'paused')
+            self.assertFalse(resumed['generation_in_progress'])
+            self.service.resume(waiting['id']);draft.assert_called_once_with(waiting)
+            self.service.resume(b['id']);self.launch.assert_called_once_with(c)
 
     def test_first_failure_does_not_leave_second_stuck(self):
         b=self.batch();a=self.work.jobs[b['candidate_ids']['A']]
@@ -86,6 +108,59 @@ class PairTests(unittest.TestCase):
         a['events'].append({'type':'provider_status','status':'fail'})
         self.assertTrue(self.service.release_second(b))
         self.launch.assert_called_once_with(self.work.jobs[b['candidate_ids']['B']])
+
+    def test_unknown_first_submission_pauses_second_across_resume_and_restart(self):
+        b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
+        a.update(stage='error',status='error',submission_started=True,task_id=None)
+        w.STREAM.persist(a)
+        self.assertFalse(self.service.release_second(b));self.launch.assert_not_called()
+        self.service.resume(b['id']);self.launch.assert_not_called()
+        value=self.service.public(b)
+        self.assertEqual(value['stage'],'error');self.assertIn('方案 B 已暂停',value['error'])
+        self.assertEqual(value['candidates'][1]['stage'],'paused')
+        self.assertFalse(value['generation_in_progress'])
+        self.assertFalse(c['submission_started'])
+        with patch.object(w.STREAM,'JOBS',{}):
+            work=w.Workflow();service=gp.GenerationPairs(work,self.root/'batches')
+            with patch.object(work,'launch') as launch,patch.object(service,'launch_sequence'):
+                service.recover();launch.assert_not_called()
+                service.resume(b['id']);launch.assert_not_called()
+            self.assertEqual(service.public(service.read(b['id']))['candidates'][1]['stage'],'paused')
+
+    def test_unknown_first_stops_sequence_without_blocking_other_work(self):
+        b=self.batch();a=self.work.jobs[b['candidate_ids']['A']]
+        a.update(stage='error',status='error',submission_started=True,task_id=None)
+        with patch.object(self.service,'launch_sequence',wraps=gp.GenerationPairs.launch_sequence.__get__(self.service)):
+            self.service.schedule_candidates(b)
+            deadline=time.monotonic()+2
+            while self.work.running and time.monotonic()<deadline:time.sleep(.01)
+        self.assertFalse(self.work.running);self.assertNotIn(b['id'],self.service.waiting)
+        self.launch.assert_not_called()
+
+    def test_unknown_first_legacy_schedule_does_not_start_new_second(self):
+        b=self.batch();b.pop('schedule');a=self.work.jobs[b['candidate_ids']['A']]
+        a.update(stage='error',status='error',submission_started=True,task_id=None)
+        self.service.schedule_candidates(b);self.launch.assert_not_called()
+
+    def test_unknown_first_does_not_prevent_recovery_of_already_submitted_second(self):
+        b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
+        a.update(stage='error',status='error',submission_started=True,task_id=None)
+        c.update(stage='error',status='pending',submission_started=True,task_id='known-second')
+        self.service.resume(b['id']);self.launch.assert_called_once_with(c)
+        self.assertNotEqual(self.service.public(b)['candidates'][1]['stage'],'paused')
+
+    def test_failure_before_first_submission_still_releases_second(self):
+        b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
+        a.update(stage='error',status='error',submission_started=False,task_id=None)
+        self.assertTrue(self.service.release_second(b));self.launch.assert_called_once_with(c)
+
+    def test_confirmed_first_failure_unblocks_second_after_reconciliation(self):
+        b=self.batch();a,c=[self.work.jobs[x] for x in b['candidate_ids'].values()]
+        a.update(stage='error',status='error',submission_started=True,task_id=None)
+        self.assertFalse(self.service.release_second(b))
+        a.update(task_id='confirmed-task');a['events'].append({'type':'provider_status','status':'fail'})
+        self.assertTrue(self.service.release_second(b));self.launch.assert_called_once_with(c)
+        self.assertNotEqual(self.service.public(b)['candidates'][1]['stage'],'paused')
 
     def test_old_batches_keep_both_songs_and_legacy_recovery(self):
         b=self.batch();b.pop('schedule');self.service.save(b)
@@ -190,13 +265,16 @@ class PairTests(unittest.TestCase):
         self.service.launch_candidate(j);self.launch.assert_not_called()
         with self.assertRaises(RuntimeError):self.service.retry(b['id'],j['id'],str(uuid.uuid4()))
 
-    def test_restart_recovers_known_task_not_selected_stems(self):
+    def test_restart_pauses_known_task_until_explicit_resume(self):
         b=self.batch();a=self.ready(b,'A');c=self.work.jobs[b['candidate_ids']['B']]
         c.update(submission_started=True,task_id='running-task',stage='generating');w.STREAM.persist(c)
         work=w.Workflow();service=gp.GenerationPairs(work,self.root/'batches')
         with patch.object(work,'launch') as launch:
             work.recover();launch.assert_not_called()
             service.recover()
+            launch.assert_not_called()
+            self.assertTrue(service.public(service.read(b['id']))['can_resume_batch'])
+            service.resume(b['id'])
             self.assertEqual([x.args[0]['id'] for x in launch.call_args_list],[c['id']])
         self.assertEqual(work.jobs[a['id']]['stage'],'awaiting_selection')
 
@@ -220,6 +298,9 @@ class PairTests(unittest.TestCase):
             work=w.Workflow();service=gp.GenerationPairs(work,self.root/'batches')
             with patch.object(work,'launch') as launch,patch.object(service,'launch_sequence'):
                 service.recover()
+                launch.assert_not_called()
+                self.assertTrue(service.public(service.read(healthy['id']))['can_resume_batch'])
+                service.resume(healthy['id'])
                 self.assertEqual([c.args[0]['id'] for c in launch.call_args_list],[active['id']])
                 launch.reset_mock();service.resume(damaged['id']);launch.assert_not_called()
             self.assertNotIn(paid['id'],work.jobs,'Damaged submitted jobs must never become fresh jobs')
@@ -264,7 +345,9 @@ class PairTests(unittest.TestCase):
         # Simulate crash after durable selection, before setting job flag.
         work=w.Workflow();service=gp.GenerationPairs(work,self.root/'batches')
         with patch.object(work,'launch') as launch:
-            service.recover();self.assertEqual([x.args[0]['id'] for x in launch.call_args_list],[c['id']])
+            service.recover();launch.assert_not_called()
+            self.assertTrue(service.public(service.read(b['id']))['can_resume_batch'])
+            service.resume(b['id']);self.assertEqual([x.args[0]['id'] for x in launch.call_args_list],[c['id']])
         self.assertTrue(work.jobs[c['id']]['selected_for_preparation'])
         self.assertFalse(work.jobs[a['id']]['selected_for_preparation'])
 

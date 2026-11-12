@@ -41,9 +41,90 @@ function fixture(t,{budget=100,videoBudget=budget,brokenModel=false,duration=16}
     submit:async input=>{calls.video++;const file=path.join(data,input.request_id+'.mp4');encode(['-f','lavfi','-i','testsrc2=size=320x180:rate=24','-t',String(input.duration),'-c:v','libx264','-pix_fmt','yuv420p',file]);const result={id:input.request_id,status:'ready',asset:{file}};clips.set(result.id,result);return result;}};
   const fetchImpl=async(_url,options)=>{calls.model++;if(brokenModel)throw Error('network interrupted');const context=JSON.parse(JSON.parse(options.body).messages[1].content);const response=context.target?{name:'新旅人',description:'穿红色外套的旅人'}:plan(context.slots);return{ok:true,text:async()=>JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(response)}}]})};};
   const options={data,key:'test-only',image,video,materials,audioPath:()=>audio,probe,ffmpeg:ff,fetchImpl,pollMs:60000,analyze:async()=>({accents:[],energy:[]})};
-  const d=createMVDirector(options);t.after(()=>d.close());return{data,p,d,options,calls,audio,video};
+  const d=createMVDirector(options);t.after(()=>d.close());return{data,p,d,options,calls,audio,video,clips};
 }
 async function execute(f,session,kind,input){const j=f.d.start({session_id:session.id,revision:session.revision,request_id:crypto.randomUUID(),kind,input});await f.d.refresh(j.id);const result=f.d.job(j.id);assert.equal(result.status,'ready',result.message);return f.d.get(session.id);}
+test('编辑歌词后，选段和分镜规划使用同一版歌词；任务执行时不允许并发修改',async t=>{
+ const f=fixture(t);let s=f.d.open(f.p);
+ s=f.d.setLyrics(s.id,{lines:[{start:2,end:4,text:'新歌词第一句'},{start:6,end:9,text:'新歌词第二句'}]});
+ const j=f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'prepare',input:{selection:{mode:'lyrics',from:0,to:1},idea:'测试',ratio:'16:9',references:[]}});
+ assert.throws(()=>f.d.setLyrics(s.id,{lines:[{start:1,end:2,text:'并发修改'}]}),/等待当前制作完成/);
+ await f.d.refresh(j.id);assert.equal(f.d.job(j.id).status,'ready');
+ s=f.d.get(s.id);assert(s.range.start>=1.8&&s.range.start<=2);assert(s.range.end>=9);
+ assert(s.plan.shots.some(shot=>JSON.stringify(shot).includes('新歌词')));
+ assert(!s.plan.shots.some(shot=>JSON.stringify(shot).includes('测试歌词')));
+});
+test('仅明确失败的单镜可在确认预算后重试，幂等并恢复原成片任务',async t=>{
+ const f=fixture(t);let s=f.d.open(f.p);
+ s=await execute(f,s,'prepare',{selection:{mode:'full'},idea:'海边旅行',ratio:'16:9',references:[]});
+ s=await execute(f,s,'preview',{confirmed:true});
+ const oldSubmit=f.video.submit;let inject=true;
+ f.video.submit=async input=>{if(inject&&f.calls.video===1){inject=false;f.calls.video++;const result={id:input.request_id,status:'failed',providerStatus:'FAILED',error:{message:'failed'}};f.clips.set(result.id,result);return result;}return oldSubmit(input);};
+ const initial=f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'render',input:{confirmed:true,subtitles:false}});
+ await f.d.refresh(initial.id);const failed=f.d.job(initial.id);assert.equal(failed.status,'failed');assert.equal(failed.shots[0].status,'ready');assert.equal(failed.shots[1].status,'failed');
+ const target=failed.shots[1],input={failed_job_id:initial.id,shot_id:target.id},quote=f.d.retryQuote(s.id,input);
+ assert.equal(quote.shot_id,target.id);assert.equal(quote.canRetry,true);assert.equal(quote.total,Math.ceil(target.duration)*.15);
+ assert.throws(()=>f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'retry-shot',input}),/确认/);
+ const videoCapabilities=f.video.capabilities;f.video.capabilities=()=>({available:true,remainingCny:0});
+ assert.throws(()=>f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'retry-shot',input:{...input,confirmed:true}}),/额度不足/);
+ f.video.capabilities=()=>({available:true});assert.equal(f.d.retryQuote(s.id,input).canRetry,false,'无可核实预算时不得提交');f.video.capabilities=videoCapabilities;
+ const before=f.calls.video,retry=f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'retry-shot',input:{...input,confirmed:true}});
+ const duplicate=f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'retry-shot',input:{...input,confirmed:true}});assert.equal(duplicate.id,retry.id);
+ assert.throws(()=>f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'retry-shot',input:{...input,confirmed:true,extra:'bypass'}}),/等待|参数无效/);
+ await f.d.refresh(retry.id);assert.equal(f.d.job(retry.id).status,'ready');assert.equal(f.calls.video,before+1);assert.equal(f.d.get(s.id).outputs.length,0,'单镜重试不会自动合成');
+ assert.throws(()=>f.d.retryQuote(s.id,input),/已有重试记录/);
+ f.d.close();const resumed=createMVDirector(f.options);t.after(()=>resumed.close());await resumed.refresh(retry.id);assert.equal(f.calls.video,before+1,'重启不会再次提交');
+ const unstarted=failed.shots.filter(shot=>shot.status==='queued').length;
+ assert.throws(()=>resumed.recover(initial.id),/确认继续制作/);
+ if(unstarted){f.video.capabilities=()=>({available:true,remainingCny:0});assert.throws(()=>resumed.recover(initial.id,{confirmed:true}),/额度不足/);f.video.capabilities=videoCapabilities;}
+ resumed.recover(initial.id,{confirmed:true});await resumed.refresh(initial.id);assert.equal(resumed.job(initial.id).status,'ready');assert.equal(f.calls.video,before+1+unstarted,'只继续先前确认过但尚未提交的镜头');assert(resumed.asset(initial.id));
+});
+test('未知、取消和无提供商确认的失败均禁止付费重试',async t=>{
+ const f=fixture(t);let s=f.d.open(f.p);s=await execute(f,s,'prepare',{selection:{mode:'full'},idea:'海边',ratio:'16:9',references:[]});s=await execute(f,s,'preview',{confirmed:true});
+ const original=f.video.submit;f.video.submit=async input=>{const result={id:input.request_id,status:'failed',providerStatus:'FAILED'};f.clips.set(result.id,result);return result;};
+ const render=f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'render',input:{confirmed:true}});await f.d.refresh(render.id);const failed=f.d.job(render.id),shot=failed.shots[0],input={failed_job_id:render.id,shot_id:shot.id};
+ for(const state of [{status:'uncertain',providerStatus:'FAILED'},{status:'failed',providerStatus:'CANCELED'},{status:'failed'},{status:'failed',providerStatus:'FAILED',retryBlocked:true}]){f.clips.set(shot.taskId,{id:shot.taskId,...state});assert.throws(()=>f.d.retryQuote(s.id,input),/确认失败/);}
+ f.video.submit=original;
+});
+test('单镜重试保留既有成片，不自动生成或替换原有成片',async t=>{
+ const f=fixture(t);let s=f.d.open(f.p);s=await execute(f,s,'prepare',{selection:{mode:'full'},idea:'海边旅行',ratio:'16:9',references:[]});
+ s=await execute(f,s,'preview',{confirmed:true});s=await execute(f,s,'render',{confirmed:true});const previous=s.generated,oldBytes=fs.readFileSync(f.d.asset(previous.id).file);
+ s=await execute(f,s,'revise',{target:'character-1',instruction:'换红色外套'});s=await execute(f,s,'preview',{confirmed:true});
+ const oldSubmit=f.video.submit;let failedOnce=false;
+ f.video.submit=async input=>{if(!failedOnce){failedOnce=true;const result={id:input.request_id,status:'failed',providerStatus:'FAILED'};f.clips.set(result.id,result);return result;}return oldSubmit(input);};
+ const job=f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'render',input:{confirmed:true}});await f.d.refresh(job.id);const failed=f.d.job(job.id);assert.equal(failed.status,'failed');
+ const shot=failed.shots.find(x=>x.status==='failed'),retry=f.d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'retry-shot',input:{failed_job_id:job.id,shot_id:shot.id,confirmed:true}});
+ await f.d.refresh(retry.id);assert.equal(f.d.job(retry.id).status,'ready');assert.equal(f.d.get(s.id).outputs.length,1);assert.deepEqual(fs.readFileSync(f.d.asset(previous.id).file),oldBytes);
+});
+test('同目录只允许一个活跃 director，第二进程在恢复扫描前拒绝',t=>{
+ const f=fixture(t),jobs=path.join(f.data,'mv-director','jobs'),bad=path.join(jobs,crypto.randomUUID()+'.json');fs.writeFileSync(bad,'not json');
+ const moduleUrl=new URL('../mv-director.mjs',import.meta.url).href;
+ const child=`import {createMVDirector} from ${JSON.stringify(moduleUrl)};try{createMVDirector({data:process.argv[1]});process.exit(2)}catch(e){if(e.code!=='MV_DIRECTOR_BUDGET_LOCKED')process.exit(3)}`;
+ execFileSync(process.execPath,['--input-type=module','-e',child,f.data],{timeout:15000});assert.equal(fs.readFileSync(bad,'utf8'),'not json');
+ fs.unlinkSync(bad);f.d.close();const next=createMVDirector(f.options);t.after(()=>next.close());assert(next.open(f.p));
+});
+test('进程意外退出后仅在持有者明确死亡时接管任务目录',t=>{
+ const f=fixture(t);f.d.close();const moduleUrl=new URL('../mv-director.mjs',import.meta.url).href;
+ const child=`import {createMVDirector} from ${JSON.stringify(moduleUrl)};createMVDirector({data:process.argv[1]});process.exit(0)`;
+ execFileSync(process.execPath,['--input-type=module','-e',child,f.data],{timeout:15000});
+ const next=createMVDirector(f.options);t.after(()=>next.close());assert(next.open(f.p));
+});
+test('租约归属不明或 PID 仍存活时保守拒绝，保留原文件',t=>{
+ const f=fixture(t);f.d.close();const dir=path.join(f.data,'mv-director','.budget-lock');fs.mkdirSync(dir);
+ const unknown=path.join(dir,'unknown');fs.writeFileSync(unknown,'preserve');
+ assert.throws(()=>createMVDirector(f.options),e=>e.code==='MV_DIRECTOR_BUDGET_LOCKED');assert.equal(fs.readFileSync(unknown,'utf8'),'preserve');
+ fs.unlinkSync(unknown);const token=crypto.randomUUID(),file=path.join(dir,`owner-${process.pid}-${token}.json`);
+ fs.writeFileSync(file,JSON.stringify({schema:'osmanthus-budget-lock-v1',pid:process.pid,host:os.hostname(),token}));
+ assert.throws(()=>createMVDirector(f.options),e=>e.code==='MV_DIRECTOR_BUDGET_LOCKED');assert(fs.existsSync(file));
+ fs.unlinkSync(file);fs.rmdirSync(dir);
+});
+test('关闭时运行中的生成仍持有租约直到异步任务结束',async t=>{
+ const f=fixture(t);f.d.close();let proceed,started;const gate=new Promise(resolve=>proceed=resolve),began=new Promise(resolve=>started=resolve),original=f.options.fetchImpl;
+ const d=createMVDirector({...f.options,fetchImpl:async(...args)=>{started();await gate;return original(...args);}});t.after(()=>d.close());
+ const s=d.open(f.p),j=d.start({session_id:s.id,revision:s.revision,request_id:crypto.randomUUID(),kind:'prepare',input:{selection:{mode:'full'},idea:'测试',ratio:'16:9',references:[]}});
+ const running=d.refresh(j.id);await began;d.close();assert.throws(()=>createMVDirector(f.options),e=>e.code==='MV_DIRECTOR_BUDGET_LOCKED');assert.throws(()=>d.open(f.p),/已关闭/);
+ proceed();await running;const next=createMVDirector(f.options);t.after(()=>next.close());assert(next.get(s.id).plan);
+});
 test('完整方案、图片、真实视频合成；只改一个角色后复用不受影响的图和视频',async t=>{
   const f=fixture(t);let s=f.d.open(f.p);const original=fs.readFileSync(f.audio);
   s=await execute(f,s,'prepare',{selection:{mode:'full'},idea:'海边旅行',ratio:'16:9',references:[]});assert.equal(s.range.duration,16);const shotCount=s.plan.shots.length;assert(shotCount>=2);

@@ -29,10 +29,10 @@ function estimatedCents(model, region, duration = 5) {
 }
 
 /** One POST per durable request, and free GET polling thereafter. No timer/retry loop. */
-export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1-t2v-turbo', region = 'cn-beijing', fetchImpl = globalThis.fetch, probe, budgetCny = 20, maxOutputBytes = 80_000_000, pollIntervalMs = 15000, submitTimeoutMs = 40000, queryTimeoutMs = 20000, downloadTimeoutMs = 120000, allowedOutputHosts = ALI_VIDEO_OUTPUT_HOSTS} = {}) {
+export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1-t2v-turbo', region = 'cn-beijing', fetchImpl = globalThis.fetch, probe, budgetCny = 20, watermark = true, maxOutputBytes = 80_000_000, pollIntervalMs = 15000, submitTimeoutMs = 40000, queryTimeoutMs = 20000, downloadTimeoutMs = 120000, allowedOutputHosts = ALI_VIDEO_OUTPUT_HOSTS} = {}) {
   if (typeof data !== 'string' || !data || typeof key !== 'string' || key.length > 4096 || /[\r\n]/.test(key) || typeof workspace !== 'string' || (workspace && !/^[a-z0-9][a-z0-9-]{0,62}$/i.test(workspace)) || typeof fetchImpl !== 'function' || (probe !== undefined && typeof probe !== 'function')) throw new TypeError('阿里云视频配置无效');
   if (!['wanx2.1-t2v-turbo', 'wan2.6-i2v-flash'].includes(model) || !['cn-beijing', 'ap-southeast-1'].includes(region)) throw new TypeError('不支持的视频模型或地域');
-  if (!Number.isFinite(budgetCny) || budgetCny <= 0 || !Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 32 || maxOutputBytes > 500_000_000 || ![pollIntervalMs, submitTimeoutMs, queryTimeoutMs, downloadTimeoutMs].every(n => Number.isSafeInteger(n) && n >= 0)) throw new TypeError('视频预算或限制配置无效');
+  if (!Number.isFinite(budgetCny) || budgetCny <= 0 || typeof watermark !== 'boolean' || !Number.isSafeInteger(maxOutputBytes) || maxOutputBytes < 32 || maxOutputBytes > 500_000_000 || ![pollIntervalMs, submitTimeoutMs, queryTimeoutMs, downloadTimeoutMs].every(n => Number.isSafeInteger(n) && n >= 0)) throw new TypeError('视频预算或限制配置无效');
   if (!Array.isArray(allowedOutputHosts) || !allowedOutputHosts.length || allowedOutputHosts.some(host => typeof host !== 'string' || !/^[a-z0-9][a-z0-9.-]*\.aliyuncs\.com$/i.test(host))) throw new TypeError('视频结果域名白名单无效');
   const hosts = new Set(allowedOutputHosts.map(host => host.toLowerCase())), budgetCents = Math.floor(budgetCny * 100 + 1e-8);
   const estimateCents = estimatedCents(model, region);
@@ -159,7 +159,7 @@ export function createAliVideo({data, key = '', workspace = '', model = 'wanx2.1
   }
   async function doSubmit(normalized) {
     let record = reserve(normalized), response, body;
-    const parameters = model === 'wanx2.1-t2v-turbo' ? {size: SIZES[record.request.ratio], prompt_extend: false, watermark: true} : {resolution: '720P', duration: record.request.duration??5, audio: false, prompt_extend: false, watermark: true};
+    const parameters = model === 'wanx2.1-t2v-turbo' ? {size: SIZES[record.request.ratio], prompt_extend: false, watermark} : {resolution: '720P', duration: record.request.duration??5, audio: false, prompt_extend: false, watermark};
     const input = {prompt: record.request.prompt, ...(normalized.image ? {img_url: normalized.image.dataUri} : {})};
     try {
       response = await fetchImpl(base + '/api/v1/services/aigc/video-generation/video-synthesis', {method: 'POST', redirect: 'error', headers: {'Content-Type': 'application/json', Authorization: 'Bearer ' + key.trim(), 'X-DashScope-Async': 'enable'}, body: JSON.stringify({model, input, parameters}), signal: AbortSignal.timeout(submitTimeoutMs)});
