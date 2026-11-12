@@ -7,6 +7,7 @@ import {getOutputFormat} from './public/output-format.js';
 import {selectSubtitleFont} from './subtitle-fonts.mjs';
 import {createBudgetLock} from './budget-lock.mjs';
 import {inspectWan3RelipVideo} from './wan3-tasks.mjs';
+import {findVisualStyle} from './public/mv-style-catalog.js';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
 const hash = value => crypto.createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest('hex');
@@ -90,7 +91,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   function get(id){const s=session(id),result=publicSession(s);if(result)result.shotVideos=generatedShotPaths(s);return result;}
   // Imported clips are bound to the particular shot, timeline and song. A
   // later creative edit or project change makes them ineligible for compose.
-  function manualSignature(s,shot){const basis={shot,style:s.plan?.style,ratio:s.ratio,source:s.source_sha256,lyrics:s.lyrics,scene:s.plan?.scenes.find(x=>x.id===shot.sceneId),characters:(shot.characterIds||[]).map(id=>s.plan?.characters.find(x=>x.id===id))};const deps=[...(shot.characterIds||[]),shot.sceneId].map(id=>({id,revision:s.assetRevision?.[id]||0}));if(deps.some(x=>x.revision))basis.assetVersions=deps;const shotPreviewRevision=s.shotPreviewRevision?.[shot.id]||0;if(shotPreviewRevision)basis.shotPreviewRevision=shotPreviewRevision;return hash(basis);}
+  function manualSignature(s,shot){const basis={shot,style:s.plan?.style,ratio:s.ratio,source:s.source_sha256,lyrics:s.lyrics,scene:s.plan?.scenes.find(x=>x.id===shot.sceneId),characters:(shot.characterIds||[]).map(id=>s.plan?.characters.find(x=>x.id===id))};const deps=[...(shot.characterIds||[]),shot.sceneId].map(id=>({id,revision:s.assetRevision?.[id]||0}));if(deps.some(x=>x.revision))basis.assetVersions=deps;const shotPreviewRevision=s.shotPreviewRevision?.[shot.id]||0;if(shotPreviewRevision)basis.shotPreviewRevision=shotPreviewRevision;if(s.visualStyle&&s.visualStyle!=='auto')basis.visualStyle=s.visualStyle;return hash(basis);}
   function manualShot(s,shot){
     if(s.planStale)return null;
     const selected=s.importedShots?.[shot.id]?.selected;
@@ -280,7 +281,9 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   }
   const items=s=>[...s.plan.characters,...s.plan.scenes,...s.plan.shots];
   function imageSpec(s,item){
-    const recipe=previewRecipe(s.plan,item,s.ratio,s.references||[]);
+    const selected=findVisualStyle(s.visualStyle||'auto');
+    const plan=selected?.description?{...s.plan,style:`${selected.description} ${s.plan.style}`} : s.plan;
+    const recipe=previewRecipe(plan,item,s.ratio,s.references||[]);
     const references=recipe.dependencies.length?recipe.dependencies.map(id=>{const preview=s.previews[id];if(preview?.selectedMaterial){const asset=materials.asset(preview.materialId);if(!asset||asset.material?.kind!=='image'||asset.material.sha256!==preview.materialSha256)throw fail('所选角色或场景素材已变化，请重新选择');return{material_id:preview.materialId};}if(!preview?.imageId)throw fail('请先完成相关角色和场景预览');return{image_id:preview.imageId};}):recipe.references.map(material_id=>({material_id}));
     return {prompt:recipe.prompt,ratio:recipe.ratio,references};
   }
@@ -584,8 +587,11 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
         if(j.kind==='prepare'){
           const range=selectMusicRange(s.project,j.input.selection),analysis=await analyze(source(s),ffmpeg,range),slots=musicSlots(s.project,range,analysis);
           j.status='calling';saveJob(j);
-          response=await completion({idea:j.input.idea||'结合歌曲情绪自由设计MV',lyrics:s.manualLyrics,slots,analysis,ratio:j.input.ratio,productionMode:j.input.productionMode||null,reference_count:j.input.references.length});
-          s.plan=validateCreativePlan(response,slots);s.planStale=false;s.range=range;s.analysis=analysis;s.ratio=j.input.ratio;s.idea=j.input.idea;s.references=j.input.references;s.productionMode=j.input.productionMode||null;s.previews={};
+          const selected=findVisualStyle(j.input.visualStyle||'auto');
+          const context={idea:j.input.idea||'结合歌曲情绪自由设计MV',lyrics:s.manualLyrics,slots,analysis,ratio:j.input.ratio,productionMode:j.input.productionMode||null,reference_count:j.input.references.length};
+          if(selected?.description)context.visual_style=selected.description;
+          response=await completion(context);
+          s.plan=validateCreativePlan(response,slots);s.planStale=false;s.range=range;s.analysis=analysis;s.ratio=j.input.ratio;s.idea=j.input.idea;s.references=j.input.references;s.productionMode=j.input.productionMode||null;s.visualStyle=selected?.id||'auto';s.previews={};
         }else{
           j.affected=affectedShots(s.plan,j.input.target);j.status='calling';saveJob(j);
           response=await completion({task:j.input.target==='all'?'修改完整方案':'只修改指定实体',target:j.input.target,instruction:j.input.instruction,plan:s.plan},j.input.target!=='all');
@@ -616,6 +622,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   function preflight(s,kind,input){
     if(kind==='prepare'){
       if(input.productionMode!==undefined&&!supportedModes.has(input.productionMode))throw fail('请选择有效的 MV 创作模式');
+      if(input.visualStyle!==undefined&&(typeof input.visualStyle!=='string'||!findVisualStyle(input.visualStyle)))throw fail('请选择有效的视觉风格');
       selectMusicRange(s.project,input.selection);if(!DIRECTOR_RATIOS.includes(input.ratio)||typeof input.idea!=='string'||input.idea.length>3000||!Array.isArray(input.references)||input.references.length>3)throw fail('请检查创作想法、画幅和参考图');
       for(const id of input.references){const a=materials.asset(id);if(a?.material.kind!=='image'||a.material.bytes>10e6)throw fail('参考素材需为10MB以内的已上传图片');}
     }else if(!s.plan)throw fail('请先生成方案');else requireCurrentPlan(s);
