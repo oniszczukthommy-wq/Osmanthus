@@ -29,7 +29,7 @@ function fixture(t,{mode='manual-web',uncertain=false}={}){
  const wan={estimateRelip:({inputDuration,duration})=>({available:true,canSubmit:true,estimatedCostCny:2.4,remainingCny:5,inputDuration,outputDuration:duration}),get:id=>lip.get(id),asset:id=>lip.has(id)?{file:clip}:null,refresh:async id=>lip.get(id),submitRelip:async input=>{calls.push(input);if(uncertain)throw Object.assign(Error('不确定'),{retryBlocked:true});const r={id:input.request_id,status:'ready',providerTaskId:'remote-task-1'};lip.set(r.id,r);return r;}};
  const fetchImpl=async(_url,options)=>{const context=JSON.parse(JSON.parse(options.body).messages[1].content);const answer={summary:'故事',style:'电影',characters:[{name:'人物',description:'蓝外套'}],scenes:[{name:'场景',description:'街道'}],shots:context.slots.map(x=>({id:x.id,name:x.id,description:'人物走路',sceneId:'scene-1',characterIds:['character-1']}))};return{ok:true,text:async()=>JSON.stringify({choices:[{finish_reason:'stop',message:{content:JSON.stringify(answer)}}]})};};
  const d=createMVDirector({data,key:'mock',materials,image,video,videoProviders:{seedance25:video,wan3:wan},audioPath:()=>song,probe,ffmpeg:ff,fetchImpl,analyze:async()=>({accents:[],energy:[]}),pollMs:60000});t.after(()=>d.close());
- return{d,project,materials,clip,calls,mode,failOutput:()=>{failOutputUpload=true;}};
+ return{d,project,materials,clip,png,data,calls,mode,failOutput:()=>{failOutputUpload=true;}};
 }
 async function ready(d,s,kind,input){const j=d.start({session_id:s.id,revision:s.revision,request_id:id(),kind,input});await d.refresh(j.id);assert.equal(d.job(j.id).status,'ready',d.job(j.id).message);return d.get(s.id);}
 async function prepare(f){let s=f.d.open(f.project);s=await ready(f.d,s,'prepare',{selection:{mode:'full'},productionMode:f.mode,idea:'测试',ratio:'4:3',references:[]});s=await ready(f.d,s,'preview',{confirmed:true});return s;}
@@ -71,4 +71,19 @@ test('远端已完成但本地保存失败时只恢复原任务，绝不再次�
  f.failOutput();await f.d.refresh(j.id);assert.equal(f.d.job(j.id).status,'failed');assert.equal(f.calls.length,1);
  assert.throws(()=>f.d.recover(j.id),/确认/);f.d.recover(j.id,{confirmed:true});await f.d.refresh(j.id);
  assert.equal(f.d.job(j.id).status,'ready',f.d.job(j.id).message);assert.equal(f.calls.length,1);
+});
+
+test('手工替换镜头参考图只令该镜头视频过期，其他镜头和历史成片保留',async t=>{
+ const f=fixture(t,{mode:'narrative'});let s=await prepare(f);s=f.d.confirmAssets({session_id:s.id,revision:s.revision});
+ s=await ready(f.d,s,'render',{confirmed:true,subtitles:false});const previous=s.generated.id,[first,second]=s.plan.shots,siblingPath=s.shotVideos[second.id];
+ assert(s.shotVideos[first.id]);assert(siblingPath);
+ const importedFile=path.join(f.data,'new-reference.png');encode(['-f','lavfi','-i','color=c=red:s=320x240','-frames:v','1',importedFile]);
+ const material=await f.materials.upload('reference.png',fs.readFileSync(importedFile));
+ s=f.d.importShotPreview({session_id:s.id,revision:s.revision,shot_id:first.id,material_id:material.id});
+ assert.equal(s.previews[first.id].materialId,material.id);assert.equal(s.shotVideos[first.id],undefined);assert.equal(s.shotVideos[second.id],siblingPath);
+ assert.equal(s.generated,null);assert(f.d.asset(previous));
+ const clip=await f.materials.upload('clip.mp4',fs.readFileSync(f.clip));s=await f.d.importShot({session_id:s.id,revision:s.revision,shot_id:first.id,material_id:clip.id});assert.equal(s.importedShots[first.id].valid,true);
+ const stale=s.importedShots[first.id].selected,other=await f.materials.upload('other.png',fs.readFileSync(f.png));
+ s=f.d.importShotPreview({session_id:s.id,revision:s.revision,shot_id:first.id,material_id:other.id});assert.equal(s.importedShots[first.id].valid,false);assert.equal(s.shotVideos[second.id],siblingPath);
+ assert.throws(()=>f.d.selectImportedShot({session_id:s.id,revision:s.revision,shot_id:first.id,version_id:stale}),/不属于当前分镜/);
 });

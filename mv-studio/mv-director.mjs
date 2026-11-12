@@ -90,7 +90,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
   function get(id){const s=session(id),result=publicSession(s);if(result)result.shotVideos=generatedShotPaths(s);return result;}
   // Imported clips are bound to the particular shot, timeline and song. A
   // later creative edit or project change makes them ineligible for compose.
-  function manualSignature(s,shot){const basis={shot,style:s.plan?.style,ratio:s.ratio,source:s.source_sha256,lyrics:s.lyrics,scene:s.plan?.scenes.find(x=>x.id===shot.sceneId),characters:(shot.characterIds||[]).map(id=>s.plan?.characters.find(x=>x.id===id))};const deps=[...(shot.characterIds||[]),shot.sceneId].map(id=>({id,revision:s.assetRevision?.[id]||0}));if(deps.some(x=>x.revision))basis.assetVersions=deps;return hash(basis);}
+  function manualSignature(s,shot){const basis={shot,style:s.plan?.style,ratio:s.ratio,source:s.source_sha256,lyrics:s.lyrics,scene:s.plan?.scenes.find(x=>x.id===shot.sceneId),characters:(shot.characterIds||[]).map(id=>s.plan?.characters.find(x=>x.id===id))};const deps=[...(shot.characterIds||[]),shot.sceneId].map(id=>({id,revision:s.assetRevision?.[id]||0}));if(deps.some(x=>x.revision))basis.assetVersions=deps;const shotPreviewRevision=s.shotPreviewRevision?.[shot.id]||0;if(shotPreviewRevision)basis.shotPreviewRevision=shotPreviewRevision;return hash(basis);}
   function manualShot(s,shot){
     if(s.planStale)return null;
     const selected=s.importedShots?.[shot.id]?.selected;
@@ -357,6 +357,24 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     if(changed){s.revision++;saveSession(s);}return get(session_id);
   }
   function assetsConfirmed(s){registerCurrentAssets(s);decorateAssets(s);return assetItems(s).every(item=>s.assetVersions[item.id]?.confirmed===true);}
+  // A manually created image is a real material bound to the current shot
+  // recipe, not an instruction to invoke the external website automatically.
+  function importShotPreview({session_id,revision,shot_id,material_id}={}){
+    requireOpen();
+    if(!UUID.test(session_id||'')||!Number.isSafeInteger(revision)||!UUID.test(material_id||'')||typeof shot_id!=='string')throw fail('镜头参考图参数无效');
+    const s=session(session_id);if(!s||!s.plan)throw fail('请先创建分镜方案',404);requireCurrentPlan(s);
+    if(s.revision!==revision)throw fail('方案已更新，请刷新后操作',409);
+    if(s.activeJob&&!terminal.has(job(s.activeJob)?.status))throw fail('请等待当前制作完成后再修改素材',409);
+    source(s);validPreviews(s);
+    const shot=s.plan.shots.find(x=>x.id===shot_id);if(!shot)throw fail('找不到指定镜头',404);
+    if(!assetsConfirmed(s))throw fail('请先确认全部角色和场景素材',409);
+    const a=assetMaterial(material_id);if(!a)throw fail('请选择已上传且小于 10MB 的图片素材');
+    const signature=hash(imageSpec(s,shot)),previous=s.previews[shot.id];
+    if(previous?.signature===signature&&previous.materialId===material_id)return get(s.id);
+    s.previews[shot.id]={signature,materialId:material_id,url:a.material.url,selectedMaterial:true,materialSha256:a.material.sha256};
+    s.shotPreviewRevision||={};s.shotPreviewRevision[shot.id]=(s.shotPreviewRevision[shot.id]||0)+1;
+    s.generated=null;s.revision++;saveSession(s);return get(s.id);
+  }
   const supportedModes=new Set(['narrative','concept','lip-sync','manual-web']);
   function videoFor(s){
     if(!s.productionMode)return video; // pre-existing projects keep their provider
@@ -681,7 +699,7 @@ export function createMVDirector({data,key='',model='deepseek-flash',image,video
     j.status='queued';j.message='正在恢复已有素材与任务';saveJob(j);s.activeJob=id;saveSession(s);schedule(id,1);return j;
   }
   for(const j of all('jobs'))if(!terminal.has(j.status))schedule(j.id,100);
-  return{open,get,start,startRelip,relipQuote,recover,setLyrics,editScript,importShot,selectImportedShot,addAssetCandidate,selectAssetVersion,confirmAssets,retryQuote:(id,input)=>retryQuote(session(id),input),quote:(id,kind)=>{const s=session(id);if(!s||!['preview','assets-preview','shots-preview','render','complete'].includes(kind))throw fail('MV方案或操作无效');return quote(s,kind);},job:id=>job(id),list:()=>all('sessions').map(publicSession).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)),asset,
+  return{open,get,start,startRelip,relipQuote,recover,setLyrics,editScript,importShot,importShotPreview,selectImportedShot,addAssetCandidate,selectAssetVersion,confirmAssets,retryQuote:(id,input)=>retryQuote(session(id),input),quote:(id,kind)=>{const s=session(id);if(!s||!['preview','assets-preview','shots-preview','render','complete'].includes(kind))throw fail('MV方案或操作无效');return quote(s,kind);},job:id=>job(id),list:()=>all('sessions').map(publicSession).sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt)),asset,
     refresh:async id=>{await advance(id);return job(id);},close(){closed=true;for(const timer of timers.values())clearTimeout(timer);timers.clear();if(!inflight.size)releaseLease();}};
   }catch(error){releaseLease();throw error;}
 }

@@ -29,7 +29,7 @@ test('HTTP 手工镜头导入、版本选择、原歌合成与下载（所有模
  const json=async(route,body,method=body===undefined?'GET':'POST')=>{const r=await fetch(base+route,{method,...(body===undefined?{}:{headers:{'content-type':'application/json'},body:JSON.stringify(body)})});let value=await r.json();return{status:r.status,value};};
  async function upload(file){const r=await fetch(base+'/api/materials',{method:'POST',headers:{'x-filename':path.basename(file)},body:fs.readFileSync(file)});assert.equal(r.status,201);return (await r.json()).material;}
  try{
-  const cap=await json('/api/capabilities');assert.equal(cap.value.mvDirectorImportShots,true);assert.equal(cap.value.deepseek,false);
+  const cap=await json('/api/capabilities');assert.equal(cap.value.mvDirectorImportShots,true);assert.equal(cap.value.mvDirectorShotPreviewImport,true);assert.equal(cap.value.deepseek,false);
   const front=await fetch(base+'/tunee-workspace.html');assert.equal(front.status,200);
   let result=await json('/api/mv-director/'+meta.sessionId);assert.equal(result.status,200);let s=result.value.session;assert.equal(s.productionMode,'manual-web');assert.equal(s.plan.shots.length,1);
   const shot=s.plan.shots[0],red=await upload(files[0]),blue=await upload(files[1]),short=await upload(files[2]);
@@ -54,6 +54,16 @@ test('HTTP 手工镜头导入、版本选择、原歌合成与下载（所有模
   const entityId=s.plan.characters[0].id,oldCandidate=s.assetVersions[entityId].selected;
   const img=path.join(resolved,'candidate.png');execFileSync(ff,['-v','error','-y','-f','lavfi','-i','color=c=yellow:s=512x512','-frames:v','1',img],{timeout:30000});
   const candidate=await upload(img);
+  const previewRoute=`/api/mv-director/${s.id}/shot-preview`;
+  assert.equal((await json(previewRoute,{revision:s.revision-1,shot_id:shot.id,material_id:candidate.id})).status,409);
+  assert.equal((await json(previewRoute,{revision:s.revision,shot_id:shot.id,material_id:red.id})).status,400,'必须为图片');
+  assert.equal((await json(previewRoute,{revision:s.revision,shot_id:shot.id,material_id:candidate.id,extra:'ignored'})).status,400,'拒绝额外字段');
+  const originalRevision=s.revision,preview=await json(previewRoute,{revision:s.revision,shot_id:shot.id,material_id:candidate.id});
+  assert.equal(preview.status,200,JSON.stringify(preview.value));s=preview.value.session;
+  assert.equal(s.revision,originalRevision+1);assert.equal(s.previews[shot.id].materialId,candidate.id);assert.equal(s.importedShots[shot.id].valid,false,'换参考图后已导入镜头不再声称对应新图');assert.equal(s.generated,null);
+  assert.equal((await fetch(base+job.output.url)).status,200,'历史成片依然可以下载');
+  const same=await json(previewRoute,{revision:s.revision,shot_id:shot.id,material_id:candidate.id});assert.equal(same.status,200);assert.equal(same.value.session.revision,s.revision,'同一材料重复提交不应清空关联状态');
+  const reimport=await json(route,{revision:s.revision,shot_id:shot.id,material_id:red.id});assert.equal(reimport.status,200);s=reimport.value.session;assert.equal(s.importedShots[shot.id].valid,true,'用户明确重新导入的镜头可用于后续合成');
   const added=await json(`/api/mv-director/${s.id}/asset-candidates`,{revision:s.revision,entity_id:entityId,material_id:candidate.id});assert.equal(added.status,200,JSON.stringify(added.value));s=added.value.session;
   assert.equal(s.assetVersions[entityId].confirmed,false);assert(s.assetVersions[entityId].versions.length>=2);assert.equal(s.importedShots[shot.id].valid,false);assert.equal(s.generated,null);assert.equal((await fetch(base+job.output.url)).status,200,'更换角色素材应保留旧成片');
   assert.equal((await json(`/api/mv-director/${s.id}/quote?kind=shots-preview`)).status,409,'更换候选后必须重新确认');

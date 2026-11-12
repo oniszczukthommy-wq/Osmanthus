@@ -46,7 +46,7 @@ const aliVideo=createAliVideo({data:DATA,key:aliKey,workspace:process.env.DASHSC
 const aiPlanner=createMVPlanner({data:DATA,key,model,fetchImpl:textFetch});
 const aiMV=createAIMVWorkflow({data:DATA,planner:aiPlanner,video:aliVideo,audioPath,probe,ffmpeg:ff});
 const tasks=new Map();
-function capability(){return{kind:'local-ai-music-video-workspace',mvDirectorShotRetry:true,mvDirectorMultimodel:true,mvDirectorImportShots:true,mvDirectorEditScript:true,mvDirectorAssetVersions:true,mvDirectorRelip:true,wan3:wan3?.capabilities()||{available:false,reason:'尚未启用'},freeRender:fs.existsSync(ff)&&fs.existsSync(fp),deepseek:!!key,aliyunVideo:aliVideo.capabilities(),canvas:{image:imageModel.capabilities(),imageVideo:imageVideo.capabilities(),speech:speechModel.capabilities(),vision:canvasVision.capabilities(),asr:canvasAudio.capabilities(),editing:fs.existsSync(ff)&&fs.existsSync(fp),visualAnalysis:!!aliKey},asr:canvasAudio.capabilities().available,platformLinks:false,comfy:{available:false,reason:'当前视频使用阿里万相API。'},sample:fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))};}
+function capability(){return{kind:'local-ai-music-video-workspace',mvDirectorShotRetry:true,mvDirectorMultimodel:true,mvDirectorImportShots:true,mvDirectorShotPreviewImport:true,mvDirectorEditScript:true,mvDirectorAssetVersions:true,mvDirectorRelip:true,wan3:wan3?.capabilities()||{available:false,reason:'尚未启用'},freeRender:fs.existsSync(ff)&&fs.existsSync(fp),deepseek:!!key,aliyunVideo:aliVideo.capabilities(),canvas:{image:imageModel.capabilities(),imageVideo:imageVideo.capabilities(),speech:speechModel.capabilities(),vision:canvasVision.capabilities(),asr:canvasAudio.capabilities(),editing:fs.existsSync(ff)&&fs.existsSync(fp),visualAnalysis:!!aliKey},asr:canvasAudio.capabilities().available,platformLinks:false,comfy:{available:false,reason:'当前视频使用阿里万相API。'},sample:fs.existsSync(path.join(PUBLIC,'assets/sample-song.mp3'))};}
 function audioPath(source){if(source.id!=='sample'&&!/^[a-f0-9-]{36}\.(mp3|wav|m4a|aac|flac|ogg|opus)$/.test(source.id))throw Error('音频来源无效');const p=source.id==='sample'?path.join(PUBLIC,'assets/sample-song.mp3'):path.join(DATA,'uploads',source.id);let stat;try{stat=fs.lstatSync(p);}catch{throw Error('找不到原音频，请重新上传');}if(!stat.isFile()||stat.isSymbolicLink())throw Error('原音频文件无效，请重新上传');return p;}
 function probe(file){return mediaProcessing.probe(file);}
 function waveform(file){return mediaProcessing.waveform(file);}
@@ -265,6 +265,12 @@ export function createServer({media=mediaProcessing}={}){const {probe,waveform}=
     const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
     if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!['revision','shot_id','material_id'].includes(key)))return send(400,{error:'镜头导入参数无效'});
     return send(200,{session:await mvDirector.importShot({...payload,session_id:directorImportShot[1]})});
+  }
+  const directorShotPreview=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/shot-preview$/);
+  if(method==='POST'&&directorShotPreview){
+    const payload=JSON.parse(await body(req,MAX_CANVAS_RECORD_BYTES));
+    if(!payload||typeof payload!=='object'||Array.isArray(payload)||Object.keys(payload).some(key=>!['revision','shot_id','material_id'].includes(key)))return send(400,{error:'镜头参考图参数无效'});
+    return send(200,{session:mvDirector.importShotPreview({...payload,session_id:directorShotPreview[1]})});
   }
   const directorSelectImport=route.match(/^\/api\/mv-director\/([a-f0-9-]{36})\/select-import$/);
   if(method==='POST'&&directorSelectImport){
